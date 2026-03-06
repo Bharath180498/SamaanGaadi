@@ -9,7 +9,9 @@ FROM node:20-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build --workspace @porter/shared && npm run build --workspace @porter/backend
+RUN ./node_modules/.bin/prisma generate --schema apps/backend/prisma/schema.prisma \
+  && npm run build --workspace @porter/shared \
+  && npm run build --workspace @porter/backend
 
 FROM node:20-alpine AS runtime
 WORKDIR /app
