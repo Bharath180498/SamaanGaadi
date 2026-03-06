@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: porter-admin
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: porter-admin
+  template:
+    metadata:
+      labels:
+        app: porter-admin
+    spec:
+      containers:
+        - name: admin
+          image: porter/admin:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: https://api.porterx.example.com/api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: porter-admin
+spec:
+  selector:
+    app: porter-admin
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

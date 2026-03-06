@@ -1,0 +1,29 @@
+{
+  "name": "@porter/admin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "unset npm_config_workspace npm_config_workspaces && NEXT_TELEMETRY_DISABLED=1 NEXT_IGNORE_INCORRECT_LOCKFILE=1 next dev",
+    "build": "unset npm_config_workspace npm_config_workspaces && NEXT_TELEMETRY_DISABLED=1 NEXT_IGNORE_INCORRECT_LOCKFILE=1 next build",
+    "start": "unset npm_config_workspace npm_config_workspaces && NEXT_TELEMETRY_DISABLED=1 NEXT_IGNORE_INCORRECT_LOCKFILE=1 next start",
+    "lint": "next lint",
+    "test": "echo 'tests not configured for admin yet'"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.7",
+    "next": "14.2.21",
+    "react": "18.3.1",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "18.3.1",
+    "swr": "^2.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.6.3"
+  }
+}

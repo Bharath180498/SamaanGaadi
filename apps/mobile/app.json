@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "PorterX",
+    "slug": "porterx-marketplace",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#FFF8F1"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.porterx.marketplace",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "PorterX uses your location for live pickup, drop, and driver tracking."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FFF8F1"
+      },
+      "package": "com.porterx.marketplace",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "extra": {
+      "apiBaseUrl": "http://192.168.0.118:3001/api"
+    }
+  }
+}

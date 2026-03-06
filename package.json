@@ -1,0 +1,25 @@
+{
+  "name": "porter-marketplace",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:backend": "npm run build --workspace @porter/shared && npm run start:dev --workspace @porter/backend",
+    "dev:mobile": "npm run start --workspace @porter/mobile",
+    "dev:admin": "NEXT_TELEMETRY_DISABLED=1 NEXT_IGNORE_INCORRECT_LOCKFILE=1 npm run dev --workspace @porter/admin",
+    "build": "npm run build --workspace @porter/shared && npm run build --workspace @porter/backend && npm run build --workspace @porter/admin && npm run build --workspace @porter/mobile",
+    "lint": "npm run lint --workspace @porter/shared && npm run lint --workspace @porter/backend && npm run lint --workspace @porter/admin && npm run lint --workspace @porter/mobile",
+    "test": "npm run test --workspace @porter/shared && npm run test --workspace @porter/backend && npm run test --workspace @porter/admin && npm run test --workspace @porter/mobile",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yml}\""
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}
