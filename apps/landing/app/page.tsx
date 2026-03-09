@@ -1,5 +1,7 @@
 import Image from 'next/image';
 
+const LOGO_SRC = '/brand/qargo-logo.svg';
+
 const features = [
   {
     id: '01',
@@ -9,7 +11,7 @@ const features = [
   {
     id: '02',
     title: 'Seamless Customer Journey',
-    body: 'Quick booking, live tracking, and clear trip status updates from request to delivery.'
+    body: 'Quick booking, live tracking, clear trip status, and billing/GST e-way support through scan-upload workflows and customer GST login.'
   },
   {
     id: '03',
@@ -38,19 +40,19 @@ const flow = [
 
 const plans = [
   {
-    name: 'Go',
-    fee: 'INR 500 / month',
-    detail: 'For individual drivers'
+    name: 'Starter',
+    fee: '5 rides free / month',
+    detail: 'Every driver gets 5 free rides each month to stay active without upfront cost.'
   },
   {
-    name: 'Pro',
-    fee: 'INR 1000 / month',
-    detail: 'For high-frequency drivers'
+    name: 'Flex',
+    fee: 'Pay up to INR 500',
+    detail: 'After free rides, continue on a low-cost pay-per-usage slab capped around INR 500.'
   },
   {
-    name: 'Enterprise',
-    fee: 'Contact sales',
-    detail: 'For fleets and enterprise contracts'
+    name: 'Monthly Unlimited',
+    fee: 'INR 1500 / month',
+    detail: 'Unlimited rides for high-frequency drivers who want full predictability.'
   }
 ];
 
@@ -65,7 +67,7 @@ export default function LandingPage() {
 
       <header className="topbar fade-in-up">
         <a className="brand" href="#">
-          <Image src="/brand/qargo-logo.png" alt="QARGO logo" width={92} height={76} className="brand-logo-nav" priority />
+          <Image src={LOGO_SRC} alt="QARGO logo" width={92} height={76} className="brand-logo-nav" priority />
           <div>
             <p className="brand-word">QARGO</p>
             <p className="brand-tag">simply deliver</p>
@@ -75,29 +77,18 @@ export default function LandingPage() {
           <a href="#platform">Platform</a>
           <a href="#flow">Flow</a>
           <a href="#pricing">Pricing</a>
+          <a href="/about">About</a>
           <a href="#contact">Contact</a>
         </nav>
       </header>
 
       <section className="hero" id="hero">
         <div className="hero-glow" aria-hidden="true" />
-        <div className="hero-ring r1" aria-hidden="true" />
-        <div className="hero-ring r2" aria-hidden="true" />
-        <div className="hero-ring r3" aria-hidden="true" />
-        <div className="hero-line" aria-hidden="true" />
 
         <div className="hero-content">
-          <Image
-            src="/brand/qargo-logo.png"
-            alt="QARGO simply deliver"
-            width={420}
-            height={420}
-            className="brand-logo-hero fade-in-up delay-1"
-            priority
-          />
           <p className="kicker fade-in-up delay-1">India&apos;s first driver-centric goods ride-hailing platform</p>
-          <h1 className="fade-in-up delay-2">QARGO</h1>
-          <p className="tagline fade-in-up delay-3">simply deliver</p>
+          <h1 className="hero-wordmark fade-in-up delay-2">QARGO</h1>
+          <p className="hero-submark fade-in-up delay-3">simply deliver</p>
           <p className="hero-copy fade-in-up delay-4">
             We understand what drivers feel on the road every day, and we built QARGO around those realities
             while keeping booking, tracking, and delivery seamless for customers.
@@ -113,16 +104,19 @@ export default function LandingPage() {
 
           <div className="hero-metrics fade-in-up delay-6">
             <article>
-              <span>Scale target</span>
-              <strong>100k+ drivers</strong>
+              <span>Coverage</span>
+              <strong>Comprehensive urban and regional reach, connecting major hubs to the last mile.</strong>
             </article>
             <article>
-              <span>Dispatch heartbeat</span>
-              <strong>5s updates</strong>
+              <span>Driver network</span>
+              <strong>
+                A thriving community of thousands of hours of collective road experience, growing daily under our
+                unique partner-first model.
+              </strong>
             </article>
             <article>
-              <span>Ops readiness</span>
-              <strong>24x7</strong>
+              <span>Live now</span>
+              <strong>Focused deployment in high-demand corridors in Namma Bengaluru.</strong>
             </article>
           </div>
         </div>
@@ -165,9 +159,9 @@ export default function LandingPage() {
 
       <section id="pricing" className="band section-pricing">
         <div className="section-head fade-in-up">
-          <p className="eyebrow">Driver Subscription</p>
-          <h2>Simple plans with a 90-day free start.</h2>
-          <p className="note">Drivers keep 100% ride earnings during the free window.</p>
+          <p className="eyebrow">Pricing Model</p>
+          <h2>Simple adoption-first pricing for every driver segment.</h2>
+          <p className="note">Start free, scale affordably, or switch to unlimited when ride volume grows.</p>
         </div>
         <div className="pricing-lines">
           {plans.map((plan, index) => (
