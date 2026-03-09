@@ -46,8 +46,9 @@ const plans = [
   },
   {
     name: 'Flex',
-    fee: 'Pay up to INR 500',
-    detail: 'After free rides, continue on a low-cost pay-per-usage slab capped around INR 500.'
+    fee: '20 rides / month',
+    detail:
+      'Includes allocation for up to 20 rides per month. This is an allocation limit, not a guarantee of 20 confirmed bookings.'
   },
   {
     name: 'Monthly Unlimited',
@@ -105,18 +106,15 @@ export default function LandingPage() {
           <div className="hero-metrics fade-in-up delay-6">
             <article>
               <span>Coverage</span>
-              <strong>Comprehensive urban and regional reach, connecting major hubs to the last mile.</strong>
+              <strong>Focused launch in high-demand Bengaluru corridors, with city expansion underway.</strong>
             </article>
             <article>
               <span>Driver network</span>
-              <strong>
-                A thriving community of thousands of hours of collective road experience, growing daily under our
-                unique partner-first model.
-              </strong>
+              <strong>Driver-partner community growing daily under our transparent, partner-first model.</strong>
             </article>
             <article>
               <span>Live now</span>
-              <strong>Focused deployment in high-demand corridors in Namma Bengaluru.</strong>
+              <strong>Goods ride-hailing with real-time dispatch and trip-stage visibility.</strong>
             </article>
           </div>
         </div>
