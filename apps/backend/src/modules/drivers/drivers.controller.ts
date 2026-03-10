@@ -49,12 +49,17 @@ export class DriversController {
     return this.driversService.earnings(driverId, query);
   }
 
+  @Get(':driverId/subscription')
+  getSubscription(@Param('driverId') driverId: string) {
+    return this.driversService.getSubscription(driverId);
+  }
+
   @Post(':driverId/subscription')
   updateSubscription(
     @Param('driverId') driverId: string,
     @Body() payload: UpdateDriverSubscriptionDto
   ) {
-    return this.driversService.updateSubscriptionPlan(driverId, payload.plan);
+    return this.driversService.updateSubscriptionPlan(driverId, payload);
   }
 
   @Get('admin/pending-approvals')

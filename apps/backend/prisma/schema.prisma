@@ -148,6 +148,13 @@ enum DriverSubscriptionStatus {
   CANCELLED
 }
 
+enum DriverEnterpriseRequestStatus {
+  PENDING
+  CONTACTED
+  APPROVED
+  REJECTED
+}
+
 model User {
   id           String         @id @default(uuid())
   name         String
@@ -198,6 +205,7 @@ model DriverProfile {
   paymentMethods     DriverPaymentMethod[]
   tripOffers         TripOffer[]
   kycDocuments       KycDocument[]
+  enterpriseRequests DriverEnterprisePlanRequest[]
 
   @@index([availabilityStatus, vehicleType, lastActiveAt])
 }
@@ -467,6 +475,24 @@ model DriverPushToken {
   driver         DriverProfile @relation(fields: [driverId], references: [id])
 
   @@index([driverId, isActive])
+}
+
+model DriverEnterprisePlanRequest {
+  id           String                       @id @default(uuid())
+  driverId     String
+  status       DriverEnterpriseRequestStatus @default(PENDING)
+  contactName  String?
+  contactPhone String?
+  city         String?
+  fleetSize    Int?
+  notes        String?
+  createdAt    DateTime                     @default(now())
+  updatedAt    DateTime                     @updatedAt
+  resolvedAt   DateTime?
+
+  driver       DriverProfile                @relation(fields: [driverId], references: [id])
+
+  @@index([driverId, status, createdAt])
 }
 
 model TripOffer {

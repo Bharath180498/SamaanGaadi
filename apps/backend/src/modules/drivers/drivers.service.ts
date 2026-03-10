@@ -1,5 +1,6 @@
 import {
   AvailabilityStatus,
+  DriverEnterpriseRequestStatus,
   DriverSubscriptionPlan,
   DriverSubscriptionStatus,
   DriverProfile,
@@ -15,6 +16,7 @@ import { RedisService } from '../../common/redis/redis.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { UpdateDriverLocationDto } from './dto/update-driver-location.dto';
 import { DriverEarningsQueryDto } from './dto/driver-earnings-query.dto';
+import { UpdateDriverSubscriptionDto } from './dto/update-driver-subscription.dto';
 
 const ONLINE_GEO_KEY = 'drivers:online';
 const BUSY_GEO_KEY = 'drivers:busy';
@@ -24,6 +26,24 @@ const SUBSCRIPTION_MONTHLY_FEE: Record<DriverSubscriptionPlan, number | null> = 
   [DriverSubscriptionPlan.GO]: 500,
   [DriverSubscriptionPlan.PRO]: 1000,
   [DriverSubscriptionPlan.ENTERPRISE]: null
+};
+
+const SUBSCRIPTION_COPY: Record<DriverSubscriptionPlan, string[]> = {
+  [DriverSubscriptionPlan.GO]: [
+    'Access all local trips',
+    'Basic driver support',
+    'Ideal for solo operators'
+  ],
+  [DriverSubscriptionPlan.PRO]: [
+    'Priority dispatch boost',
+    'Faster support response',
+    'Designed for power drivers'
+  ],
+  [DriverSubscriptionPlan.ENTERPRISE]: [
+    'Fleet-level support',
+    'Contract billing and settlement',
+    'High-volume booking workflows'
+  ]
 };
 
 @Injectable()
@@ -357,15 +377,138 @@ export class DriversService implements OnModuleInit {
     return trialEndsAt;
   }
 
-  async updateSubscriptionPlan(driverId: string, plan: DriverSubscriptionPlan) {
-    const driver = await this.prisma.driverProfile.findUnique({ where: { id: driverId } });
+  private buildSubscriptionCatalog() {
+    return (Object.values(DriverSubscriptionPlan) as DriverSubscriptionPlan[]).map((plan) => ({
+      plan,
+      monthlyFeeInr: SUBSCRIPTION_MONTHLY_FEE[plan],
+      billing: plan === DriverSubscriptionPlan.ENTERPRISE ? 'contract' : 'monthly',
+      features: SUBSCRIPTION_COPY[plan]
+    }));
+  }
+
+  private async loadDriverSubscriptionContext(driverId: string) {
+    const driver = await this.prisma.driverProfile.findUnique({
+      where: { id: driverId },
+      include: {
+        user: true,
+        enterpriseRequests: {
+          orderBy: { createdAt: 'desc' },
+          take: 1
+        }
+      }
+    });
     if (!driver) {
       throw new NotFoundException('Driver not found');
     }
+    return driver;
+  }
+
+  async getSubscription(driverId: string) {
+    const driver = await this.loadDriverSubscriptionContext(driverId);
+    const trialEndsAt = this.resolveTrialEndsAt(driver);
+    const now = new Date();
+    const trialActive = now.getTime() <= trialEndsAt.getTime();
+    const daysLeft = trialActive
+      ? Math.max(0, Math.ceil((trialEndsAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))
+      : 0;
+    const latestEnterpriseRequest = driver.enterpriseRequests[0];
+
+    return {
+      driverId: driver.id,
+      current: {
+        plan: driver.subscriptionPlan,
+        status: driver.subscriptionStatus,
+        monthlyFeeInr: SUBSCRIPTION_MONTHLY_FEE[driver.subscriptionPlan],
+        trial: {
+          isActive: trialActive,
+          endsAt: trialEndsAt,
+          daysLeft
+        }
+      },
+      options: this.buildSubscriptionCatalog(),
+      enterpriseRequest: latestEnterpriseRequest
+        ? {
+            id: latestEnterpriseRequest.id,
+            status: latestEnterpriseRequest.status,
+            createdAt: latestEnterpriseRequest.createdAt,
+            notes: latestEnterpriseRequest.notes
+          }
+        : null
+    };
+  }
+
+  async updateSubscriptionPlan(driverId: string, payload: UpdateDriverSubscriptionDto) {
+    const { plan } = payload;
+    const driver = await this.loadDriverSubscriptionContext(driverId);
 
     const trialEndsAt = this.resolveTrialEndsAt(driver);
+
+    if (driver.subscriptionPlan === plan) {
+      return {
+        changed: false,
+        message: `You are already on ${plan}.`,
+        driverId: driver.id,
+        plan: driver.subscriptionPlan,
+        status: driver.subscriptionStatus,
+        trialEndsAt
+      };
+    }
+
+    if (plan === DriverSubscriptionPlan.ENTERPRISE) {
+      const existingPending = driver.enterpriseRequests.find(
+        (request) => request.status === DriverEnterpriseRequestStatus.PENDING
+      );
+
+      const enterpriseRequest = existingPending
+        ? await this.prisma.driverEnterprisePlanRequest.update({
+            where: { id: existingPending.id },
+            data: {
+              contactName: payload.contactName ?? existingPending.contactName ?? driver.user.name,
+              contactPhone: payload.contactPhone ?? existingPending.contactPhone ?? driver.user.phone,
+              city: payload.city ?? existingPending.city,
+              fleetSize: payload.fleetSize ?? existingPending.fleetSize,
+              notes: payload.notes ?? existingPending.notes
+            }
+          })
+        : await this.prisma.driverEnterprisePlanRequest.create({
+            data: {
+              driverId: driver.id,
+              status: DriverEnterpriseRequestStatus.PENDING,
+              contactName: payload.contactName ?? driver.user.name,
+              contactPhone: payload.contactPhone ?? driver.user.phone,
+              city: payload.city,
+              fleetSize: payload.fleetSize,
+              notes: payload.notes
+            }
+          });
+
+      const updated = await this.prisma.driverProfile.update({
+        where: { id: driver.id },
+        data: {
+          subscriptionPlan: DriverSubscriptionPlan.ENTERPRISE,
+          subscriptionStatus: DriverSubscriptionStatus.ACTIVE,
+          trialEndsAt
+        }
+      });
+
+      return {
+        changed: true,
+        requiresSalesFollowup: true,
+        message: 'Enterprise upgrade submitted. Our team will contact you shortly.',
+        driverId: updated.id,
+        plan: updated.subscriptionPlan,
+        status: updated.subscriptionStatus,
+        trialEndsAt: updated.trialEndsAt,
+        enterpriseRequest: {
+          id: enterpriseRequest.id,
+          status: enterpriseRequest.status,
+          createdAt: enterpriseRequest.createdAt
+        }
+      };
+    }
+
     const updated = await this.prisma.driverProfile.update({
-      where: { id: driverId },
+      where: { id: driver.id },
       data: {
         subscriptionPlan: plan,
         subscriptionStatus: DriverSubscriptionStatus.ACTIVE,
@@ -373,7 +516,21 @@ export class DriversService implements OnModuleInit {
       }
     });
 
+    await this.prisma.driverEnterprisePlanRequest.updateMany({
+      where: {
+        driverId: driver.id,
+        status: DriverEnterpriseRequestStatus.PENDING
+      },
+      data: {
+        status: DriverEnterpriseRequestStatus.REJECTED,
+        resolvedAt: new Date(),
+        notes: 'Auto-closed after driver switched to a non-enterprise plan.'
+      }
+    });
+
     return {
+      changed: true,
+      message: `Plan switched to ${updated.subscriptionPlan}.`,
       driverId: updated.id,
       plan: updated.subscriptionPlan,
       status: updated.subscriptionStatus,

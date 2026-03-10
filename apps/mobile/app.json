@@ -12,11 +12,19 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.qargo.marketplace",
+      "config": {
+        "googleMapsApiKey": "AIzaSyBa4kGEsQMiWJrrpEi_4AyZq-qBFgdzfGQ"
+      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Qargo uses your location for live pickup, drop, and driver tracking."
       }
     },
     "android": {
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyBa4kGEsQMiWJrrpEi_4AyZq-qBFgdzfGQ"
+        }
+      },
       "adaptiveIcon": {
         "backgroundColor": "#FFF8F1"
       },

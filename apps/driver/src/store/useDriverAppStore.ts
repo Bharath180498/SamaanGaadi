@@ -33,6 +33,47 @@ interface DriverEarnings {
   }>;
 }
 
+interface DriverSubscriptionCatalog {
+  driverId: string;
+  current: {
+    plan: 'GO' | 'PRO' | 'ENTERPRISE';
+    status: 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
+    monthlyFeeInr: number | null;
+    trial: {
+      isActive: boolean;
+      endsAt: string;
+      daysLeft: number;
+    };
+  };
+  options: Array<{
+    plan: 'GO' | 'PRO' | 'ENTERPRISE';
+    monthlyFeeInr: number | null;
+    billing: 'monthly' | 'contract';
+    features: string[];
+  }>;
+  enterpriseRequest: {
+    id: string;
+    status: 'PENDING' | 'CONTACTED' | 'APPROVED' | 'REJECTED';
+    createdAt: string;
+    notes?: string;
+  } | null;
+}
+
+interface UpdateSubscriptionResult {
+  changed: boolean;
+  message: string;
+  driverId: string;
+  plan: 'GO' | 'PRO' | 'ENTERPRISE';
+  status: 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
+  trialEndsAt?: string;
+  requiresSalesFollowup?: boolean;
+  enterpriseRequest?: {
+    id: string;
+    status: 'PENDING' | 'CONTACTED' | 'APPROVED' | 'REJECTED';
+    createdAt: string;
+  };
+}
+
 interface DriverAppState {
   driverProfileId?: string;
   availabilityStatus?: 'ONLINE' | 'OFFLINE' | 'BUSY';
@@ -40,12 +81,23 @@ interface DriverAppState {
   nextJob?: any;
   pendingOffers: any[];
   earnings?: DriverEarnings;
+  subscriptionCatalog?: DriverSubscriptionCatalog;
   loading: boolean;
   error?: string;
   bootstrap: () => Promise<void>;
   refreshJobs: () => Promise<void>;
   refreshEarnings: () => Promise<void>;
-  setSubscriptionPlan: (plan: 'GO' | 'PRO' | 'ENTERPRISE') => Promise<void>;
+  refreshSubscriptionCatalog: () => Promise<void>;
+  setSubscriptionPlan: (
+    plan: 'GO' | 'PRO' | 'ENTERPRISE',
+    details?: {
+      contactName?: string;
+      contactPhone?: string;
+      city?: string;
+      fleetSize?: number;
+      notes?: string;
+    }
+  ) => Promise<UpdateSubscriptionResult>;
   setAvailability: (next: 'ONLINE' | 'OFFLINE') => Promise<void>;
   updateLocation: (lat: number, lng: number, orderId?: string) => Promise<void>;
   acceptOffer: (offerId: string) => Promise<void>;
@@ -140,7 +192,7 @@ export const useDriverAppStore = create<DriverAppState>((set, get) => ({
 
       get().connectRealtime();
 
-      await Promise.all([get().refreshJobs(), get().refreshEarnings()]);
+      await Promise.all([get().refreshJobs(), get().refreshEarnings(), get().refreshSubscriptionCatalog()]);
     } catch (error: unknown) {
       set({
         loading: false,
@@ -179,14 +231,27 @@ export const useDriverAppStore = create<DriverAppState>((set, get) => ({
     const response = await api.get(`/drivers/${driverProfileId}/earnings`);
     set({ earnings: response.data });
   },
-  async setSubscriptionPlan(plan) {
+  async refreshSubscriptionCatalog() {
     const driverProfileId = get().driverProfileId;
     if (!driverProfileId) {
       return;
     }
 
-    await api.post(`/drivers/${driverProfileId}/subscription`, { plan });
-    await get().refreshEarnings();
+    const response = await api.get(`/drivers/${driverProfileId}/subscription`);
+    set({ subscriptionCatalog: response.data });
+  },
+  async setSubscriptionPlan(plan, details) {
+    const driverProfileId = get().driverProfileId;
+    if (!driverProfileId) {
+      throw new Error('Driver profile not ready yet.');
+    }
+
+    const response = await api.post<UpdateSubscriptionResult>(`/drivers/${driverProfileId}/subscription`, {
+      plan,
+      ...(details ?? {})
+    });
+    await Promise.all([get().refreshEarnings(), get().refreshSubscriptionCatalog()]);
+    return response.data;
   },
   async setAvailability(next) {
     const driverProfileId = get().driverProfileId;

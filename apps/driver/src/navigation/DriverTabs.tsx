@@ -17,6 +17,7 @@ export function DriverTabs() {
   const bootstrap = useDriverAppStore((state) => state.bootstrap);
   const refreshJobs = useDriverAppStore((state) => state.refreshJobs);
   const refreshEarnings = useDriverAppStore((state) => state.refreshEarnings);
+  const refreshSubscriptionCatalog = useDriverAppStore((state) => state.refreshSubscriptionCatalog);
   const pendingOffers = useDriverAppStore((state) => state.pendingOffers);
   const currentTopOfferId = pendingOffers[0]?.id as string | undefined;
   const lastSeenOfferId = useRef<string | undefined>(undefined);
@@ -29,11 +30,11 @@ export function DriverTabs() {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      void Promise.all([refreshJobs(), refreshEarnings()]);
+      void Promise.all([refreshJobs(), refreshEarnings(), refreshSubscriptionCatalog()]);
     }, 6000);
 
     return () => clearInterval(timer);
-  }, [refreshEarnings, refreshJobs]);
+  }, [refreshEarnings, refreshJobs, refreshSubscriptionCatalog]);
 
   useEffect(() => {
     if (!isOfferTrackerReady.current) {

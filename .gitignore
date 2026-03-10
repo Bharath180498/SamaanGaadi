@@ -27,3 +27,4 @@ override.tf.json
 *_override.tf.json
 infra/aws/terraform/terraform.tfvars
 infra/aws/terraform/backend.hcl
+.mobile_dupe_quarantine/
