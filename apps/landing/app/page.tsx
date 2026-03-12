@@ -35,8 +35,8 @@ const corridors = [
   {
     city: 'West & Central',
     route: 'Commerce corridors',
-    eta: 'City + intercity',
-    note: 'Built for daily SME and enterprise movement.'
+    eta: 'City delivery active',
+    note: 'Intercity routes are coming soon.'
   },
   {
     city: 'South & East',
@@ -311,8 +311,8 @@ export default function LandingPage() {
       <section id="network" className="band section-network">
         <div className="section-head fade-in-up">
           <p className="eyebrow">India Network</p>
-          <h2>Built for mixed city demand and corridor movement.</h2>
-          <p className="note">Expand region by region with consistent operating quality.</p>
+          <h2>Built for intra-city demand. Intercity coming soon.</h2>
+          <p className="note">City operations are live now. City-to-city expansion is on roadmap.</p>
         </div>
         <SectionCollage
           label={sectionVisuals.network.label}
