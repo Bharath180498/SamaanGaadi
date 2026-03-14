@@ -27,4 +27,8 @@ export class CreatePaymentDto {
   @IsOptional()
   @IsString()
   driverPaymentMethodId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  applySurcharge?: boolean;
 }

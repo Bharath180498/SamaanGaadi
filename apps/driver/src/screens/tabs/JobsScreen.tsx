@@ -12,16 +12,17 @@ import { colors, radius, spacing, typography } from '../../theme';
 import { useDriverAppStore } from '../../store/useDriverAppStore';
 import { openGoogleMapsNavigation } from '../../utils/mapsNavigation';
 import { DeliveryProofModal, type DeliveryProofSubmission } from '../../components/DeliveryProofModal';
+import { useDriverI18n } from '../../i18n/useDriverI18n';
 
-const actionMap: Array<{ status: string; endpoint: string; label: string; payload?: Record<string, unknown> }> = [
-  { status: 'ASSIGNED', endpoint: 'accept', label: 'Accept Job' },
-  { status: 'DRIVER_EN_ROUTE', endpoint: 'arrived-pickup', label: 'Reached Pickup' },
-  { status: 'ARRIVED_PICKUP', endpoint: 'start-loading', label: 'Start Loading' },
-  { status: 'LOADING', endpoint: 'start-transit', label: 'Start Transit' },
+const actionMap: Array<{ status: string; endpoint: string; labelKey: string; payload?: Record<string, unknown> }> = [
+  { status: 'ASSIGNED', endpoint: 'accept', labelKey: 'jobs.action.accept' },
+  { status: 'DRIVER_EN_ROUTE', endpoint: 'arrived-pickup', labelKey: 'jobs.action.reachedPickup' },
+  { status: 'ARRIVED_PICKUP', endpoint: 'start-loading', labelKey: 'jobs.action.startLoading' },
+  { status: 'LOADING', endpoint: 'start-transit', labelKey: 'jobs.action.startTransit' },
   {
     status: 'IN_TRANSIT',
     endpoint: 'complete',
-    label: 'Complete Delivery',
+    labelKey: 'jobs.action.completeDelivery',
     payload: { distanceKm: 14, durationMinutes: 38 }
   }
 ];
@@ -29,6 +30,15 @@ const actionMap: Array<{ status: string; endpoint: string; label: string; payloa
 interface CompletionMetrics {
   distanceKm?: number;
   durationMinutes?: number;
+}
+
+interface OfferWithPayout {
+  estimatedDriverPayoutInr?: number | string;
+  order?: {
+    estimatedPrice?: number | string;
+    finalPrice?: number | string;
+    waitingCharge?: number | string;
+  };
 }
 
 function parseCompletionMetric(value: unknown) {
@@ -50,7 +60,35 @@ function extractCompletionMetrics(payload?: Record<string, unknown>): Completion
   };
 }
 
+function parseMoney(value: unknown) {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return undefined;
+  }
+  return parsed;
+}
+
+function getOfferEarningAmount(offer?: OfferWithPayout | null) {
+  if (!offer) {
+    return undefined;
+  }
+
+  const explicitPayout = parseMoney(offer.estimatedDriverPayoutInr);
+  if (typeof explicitPayout === 'number') {
+    return explicitPayout;
+  }
+
+  const fare = parseMoney(offer.order?.finalPrice ?? offer.order?.estimatedPrice);
+  if (typeof fare !== 'number') {
+    return undefined;
+  }
+
+  const waitingCharge = parseMoney(offer.order?.waitingCharge) ?? 0;
+  return Number((fare + waitingCharge).toFixed(2));
+}
+
 export function JobsScreen() {
+  const { t } = useDriverI18n();
   const currentJob = useDriverAppStore((state) => state.currentJob);
   const nextJob = useDriverAppStore((state) => state.nextJob);
   const pendingOffers = useDriverAppStore((state) => state.pendingOffers);
@@ -76,16 +114,16 @@ export function JobsScreen() {
       return {
         lat: currentJob.order.dropLat,
         lng: currentJob.order.dropLng,
-        label: 'Navigate to Drop'
+        label: t('jobs.navigateDrop')
       };
     }
 
     return {
       lat: currentJob.order.pickupLat,
       lng: currentJob.order.pickupLng,
-      label: 'Navigate to Pickup'
+      label: t('jobs.navigatePickup')
     };
-  }, [currentJob]);
+  }, [currentJob, t]);
 
   const runAction = async () => {
     if (!currentJob || !activeAction) {
@@ -101,13 +139,13 @@ export function JobsScreen() {
     try {
       await runTripAction(currentJob.id, activeAction.endpoint, activeAction.payload);
     } catch {
-      Alert.alert('Action failed', 'Could not update trip state.');
+      Alert.alert(t('jobs.alert.actionFailedTitle'), t('jobs.alert.actionFailedBody'));
     }
   };
 
   const submitDeliveryProof = async (payload: DeliveryProofSubmission) => {
     if (!currentJob) {
-      Alert.alert('No active trip', 'Trip is no longer active. Refresh jobs and try again.');
+      Alert.alert(t('jobs.alert.noActiveTripTitle'), t('jobs.alert.noActiveTripBody'));
       return;
     }
 
@@ -120,7 +158,7 @@ export function JobsScreen() {
       setDeliveryProofVisible(false);
       setCompletionMetrics({});
     } catch {
-      Alert.alert('Completion failed', 'Could not upload delivery proof. Check network and retry.');
+      Alert.alert(t('jobs.alert.completionFailedTitle'), t('jobs.alert.completionFailedBody'));
     } finally {
       setDeliveryProofSubmitting(false);
     }
@@ -128,7 +166,7 @@ export function JobsScreen() {
 
   const navigateToTarget = async (target?: { lat?: number; lng?: number }, fallbackMessage?: string) => {
     if (typeof target?.lat !== 'number' || typeof target?.lng !== 'number') {
-      Alert.alert('Location unavailable', fallbackMessage ?? 'Could not find trip coordinates.');
+      Alert.alert(t('jobs.alert.locationUnavailableTitle'), fallbackMessage ?? t('jobs.alert.locationUnavailableBody'));
       return;
     }
 
@@ -141,103 +179,112 @@ export function JobsScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Jobs & Offers</Text>
+        <Text style={styles.title}>{t('jobs.title')}</Text>
 
         <View style={styles.card}>
           <View style={styles.cardHead}>
-            <Text style={styles.cardTitle}>Incoming Offers</Text>
+            <Text style={styles.cardTitle}>{t('jobs.incoming')}</Text>
             <Pressable onPress={() => void refreshJobs()}>
-              <Text style={styles.refresh}>Refresh</Text>
+              <Text style={styles.refresh}>{t('jobs.refresh')}</Text>
             </Pressable>
           </View>
 
           {pendingOffers.length === 0 ? (
-            <Text style={styles.info}>No pending offers right now.</Text>
+            <Text style={styles.info}>{t('jobs.noneOffers')}</Text>
           ) : null}
 
-          {pendingOffers.map((offer) => (
-            <View key={offer.id} style={styles.offerItem}>
-              <View style={styles.offerCopy}>
-                <Text style={styles.offerTitle}>Order {offer.orderId.slice(0, 8)}</Text>
-                <Text style={styles.offerMeta}>{offer.order?.pickupAddress}</Text>
-                <Text style={styles.offerMeta}>ETA {offer.routeEtaMinutes} min • {offer.vehicleMatchType}</Text>
-              </View>
-              <View style={styles.offerActions}>
-                <Pressable style={[styles.offerButton, styles.offerAccept]} onPress={() => void acceptOffer(offer.id)}>
-                  <Text style={styles.offerButtonText}>Accept</Text>
+          {pendingOffers.map((offer) => {
+            const offerEarning = getOfferEarningAmount(offer);
+
+            return (
+              <View key={offer.id} style={styles.offerItem}>
+                <View style={styles.offerCopy}>
+                  <Text style={styles.offerTitle}>{t('jobs.offerOrder', { id: offer.orderId.slice(0, 8) })}</Text>
+                  {typeof offerEarning === 'number' ? (
+                    <Text style={styles.offerEarning}>{t('jobs.offerEarning', { value: offerEarning.toFixed(2) })}</Text>
+                  ) : null}
+                  <Text style={styles.offerMeta}>{offer.order?.pickupAddress}</Text>
+                  <Text style={styles.offerMeta}>
+                    {t('jobs.offerEtaVehicle', { eta: offer.routeEtaMinutes, vehicle: offer.vehicleMatchType })}
+                  </Text>
+                </View>
+                <View style={styles.offerActions}>
+                  <Pressable style={[styles.offerButton, styles.offerAccept]} onPress={() => void acceptOffer(offer.id)}>
+                    <Text style={styles.offerButtonText}>{t('jobs.accept')}</Text>
+                  </Pressable>
+                  <Pressable style={[styles.offerButton, styles.offerReject]} onPress={() => void rejectOffer(offer.id)}>
+                    <Text style={[styles.offerButtonText, { color: colors.accent }]}>{t('jobs.reject')}</Text>
+                  </Pressable>
+                </View>
+                <Pressable
+                  style={styles.offerNavButton}
+                  onPress={() =>
+                    void navigateToTarget(
+                      { lat: offer.order?.pickupLat, lng: offer.order?.pickupLng },
+                      t('jobs.alert.locationUnavailableBody')
+                    )
+                  }
+                >
+                  <Text style={styles.offerNavButtonText}>{t('jobs.openPickup')}</Text>
                 </Pressable>
-                <Pressable style={[styles.offerButton, styles.offerReject]} onPress={() => void rejectOffer(offer.id)}>
-                  <Text style={[styles.offerButtonText, { color: colors.accent }]}>Reject</Text>
-                </Pressable>
               </View>
-              <Pressable
-                style={styles.offerNavButton}
-                onPress={() =>
-                  void navigateToTarget(
-                    { lat: offer.order?.pickupLat, lng: offer.order?.pickupLng },
-                    'Offer pickup location is not available yet.'
-                  )
-                }
-              >
-                <Text style={styles.offerNavButtonText}>Open Pickup in Google Maps</Text>
-              </Pressable>
-            </View>
-          ))}
+            );
+          })}
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Current Job</Text>
+          <Text style={styles.cardTitle}>{t('jobs.current')}</Text>
           {currentJob ? (
             <>
-              <Text style={styles.info}>Trip: {currentJob.id}</Text>
-              <Text style={styles.info}>Status: {currentJob.status}</Text>
-              <Text style={styles.info}>Pickup: {currentJob.order?.pickupAddress}</Text>
-              <Text style={styles.info}>Drop: {currentJob.order?.dropAddress}</Text>
+              <Text style={styles.info}>{t('jobs.trip', { value: currentJob.id })}</Text>
+              <Text style={styles.info}>{t('jobs.status', { value: currentJob.status })}</Text>
+              <Text style={styles.info}>{t('jobs.pickup', { value: currentJob.order?.pickupAddress ?? '--' })}</Text>
+              <Text style={styles.info}>{t('jobs.drop', { value: currentJob.order?.dropAddress ?? '--' })}</Text>
 
               <Pressable
                 style={styles.navButton}
                 onPress={() =>
                   void navigateToTarget(
                     { lat: currentNavigationTarget?.lat, lng: currentNavigationTarget?.lng },
-                    'Current trip location coordinates are not available yet.'
+                    t('jobs.alert.locationUnavailableBody')
                   )
                 }
               >
-                <Text style={styles.navButtonText}>{currentNavigationTarget?.label ?? 'Open in Google Maps'}</Text>
+                <Text style={styles.navButtonText}>{currentNavigationTarget?.label ?? t('jobs.openMaps')}</Text>
               </Pressable>
 
               {activeAction ? (
                 <Pressable style={styles.mainActionButton} onPress={() => void runAction()}>
-                  <Text style={styles.mainActionText}>{activeAction.label}</Text>
+                  <Text style={styles.mainActionText}>{t(activeAction.labelKey)}</Text>
                 </Pressable>
               ) : null}
             </>
           ) : (
-            <Text style={styles.info}>No active job.</Text>
+            <Text style={styles.info}>{t('jobs.noCurrent')}</Text>
           )}
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Next Job (Accepted Queue)</Text>
+          <Text style={styles.cardTitle}>{t('jobs.next')}</Text>
           {nextJob ? (
             <>
-              <Text style={styles.info}>Order: {nextJob.id}</Text>
-              <Text style={styles.info}>Pickup: {nextJob.pickupAddress}</Text>
-              <Text style={styles.info}>Drop: {nextJob.dropAddress}</Text>
+              <Text style={styles.info}>{t('jobs.offerOrder', { id: nextJob.id })}</Text>
+              <Text style={styles.info}>{t('jobs.pickup', { value: nextJob.pickupAddress })}</Text>
+              <Text style={styles.info}>{t('jobs.drop', { value: nextJob.dropAddress })}</Text>
               <Pressable
                 style={styles.navButton}
                 onPress={() =>
                   void navigateToTarget(
                     { lat: nextJob.pickupLat, lng: nextJob.pickupLng },
-                    'Queued job pickup coordinates are not available yet.'
+                    t('jobs.alert.locationUnavailableBody')
                   )
                 }
               >
-                <Text style={styles.navButtonText}>Navigate to Queued Pickup</Text>
+                <Text style={styles.navButtonText}>{t('jobs.navigateQueued')}</Text>
               </Pressable>
             </>
           ) : (
-            <Text style={styles.info}>No queued job accepted yet.</Text>
+            <Text style={styles.info}>{t('jobs.noNext')}</Text>
           )}
         </View>
       </ScrollView>
@@ -280,10 +327,15 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     padding: spacing.sm,
     gap: spacing.xs,
-    backgroundColor: '#FFF7ED'
+    backgroundColor: '#F8FAFF'
   },
   offerCopy: { gap: 2 },
   offerTitle: { fontFamily: typography.bodyBold, color: colors.accent },
+  offerEarning: {
+    fontFamily: typography.bodyBold,
+    color: '#1E3A8A',
+    fontSize: 14
+  },
   offerMeta: { fontFamily: typography.body, color: colors.mutedText, fontSize: 12 },
   offerActions: { flexDirection: 'row', gap: spacing.xs },
   offerButton: {
@@ -294,9 +346,9 @@ const styles = StyleSheet.create({
   },
   offerAccept: { backgroundColor: colors.secondary },
   offerReject: {
-    backgroundColor: '#FFEDD5',
+    backgroundColor: '#DBEAFE',
     borderWidth: 1,
-    borderColor: '#FDBA74'
+    borderColor: '#93C5FD'
   },
   offerButtonText: { color: colors.white, fontFamily: typography.bodyBold },
   offerNavButton: {
@@ -306,7 +358,7 @@ const styles = StyleSheet.create({
     borderColor: colors.secondary,
     alignItems: 'center',
     paddingVertical: spacing.xs,
-    backgroundColor: '#ECFDF5'
+    backgroundColor: '#EFF6FF'
   },
   offerNavButtonText: {
     color: colors.secondary,
@@ -320,7 +372,7 @@ const styles = StyleSheet.create({
     borderColor: colors.secondary,
     alignItems: 'center',
     paddingVertical: spacing.xs,
-    backgroundColor: '#ECFDF5'
+    backgroundColor: '#EFF6FF'
   },
   navButtonText: {
     color: colors.secondary,

@@ -7,7 +7,7 @@ export class CreateDriverPaymentMethodDto {
   @IsString()
   userId!: string;
 
-  @ApiProperty({ enum: DriverPaymentMethodType, required: false, default: DriverPaymentMethodType.UPI_QR })
+  @ApiProperty({ enum: DriverPaymentMethodType, required: false, default: DriverPaymentMethodType.UPI_VPA })
   @IsOptional()
   @IsEnum(DriverPaymentMethodType)
   type?: DriverPaymentMethodType;

@@ -30,6 +30,26 @@ export type PaymentMethod =
   | 'DRIVER_UPI_DIRECT'
   | 'CASH';
 
+export type CustomerWalletMethodType = 'CREDIT_CARD' | 'DEBIT_CARD' | 'UPI_ID';
+
+export interface CustomerWalletMethod {
+  id: string;
+  type: CustomerWalletMethodType;
+  label: string;
+  cardLast4?: string;
+  upiId?: string;
+  isDefault: boolean;
+}
+
+const UPI_PATTERN = /^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,}$/i;
+
+function walletTypeToPaymentMethod(type: CustomerWalletMethodType): PaymentMethod {
+  if (type === 'UPI_ID') {
+    return 'UPI_SCAN_PAY';
+  }
+  return 'VISA_5496';
+}
+
 interface CustomerState {
   activeOrderId?: string;
   activeOrderStatus?: string;
@@ -51,6 +71,8 @@ interface CustomerState {
   autoGenerateEwayBill: boolean;
   generatedEwayBillNumber?: string;
   paymentMethod: PaymentMethod;
+  walletMethods: CustomerWalletMethod[];
+  defaultWalletMethodId?: string;
   insuranceQuotes: InsuranceQuoteOption[];
   insuranceLoading: boolean;
   estimateLoading: boolean;
@@ -74,6 +96,15 @@ interface CustomerState {
     autoGenerateEwayBill?: boolean;
   }) => void;
   setPaymentMethod: (method: PaymentMethod) => void;
+  addWalletMethod: (input: {
+    type: CustomerWalletMethodType;
+    label?: string;
+    cardLast4?: string;
+    upiId?: string;
+    setAsDefault?: boolean;
+  }) => void;
+  setDefaultWalletMethod: (methodId: string) => void;
+  removeWalletMethod: (methodId: string) => void;
   fetchQuotes: (input?: BookingEstimateInput) => Promise<void>;
   fetchInsuranceQuotes: () => Promise<void>;
   selectVehicle: (vehicleType: BookingInput['vehicleType']) => void;
@@ -126,6 +157,16 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
   autoGenerateEwayBill: DEFAULTS.autoGenerateEwayBill,
   generatedEwayBillNumber: undefined,
   paymentMethod: 'VISA_5496',
+  walletMethods: [
+    {
+      id: 'wallet-card-5496',
+      type: 'CREDIT_CARD',
+      label: 'Credit Card •••• 5496',
+      cardLast4: '5496',
+      isDefault: true
+    }
+  ],
+  defaultWalletMethodId: 'wallet-card-5496',
   insuranceQuotes: [],
   insuranceLoading: false,
   estimateLoading: false,
@@ -167,6 +208,97 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
   },
   setPaymentMethod(method) {
     set({ paymentMethod: method });
+  },
+  addWalletMethod(input) {
+    set((state) => {
+      const isUpi = input.type === 'UPI_ID';
+      const normalizedUpi = input.upiId?.trim().toLowerCase();
+      const normalizedLast4 = input.cardLast4?.trim();
+      const normalizedLabel = input.label?.trim();
+
+      if (isUpi) {
+        if (!normalizedUpi || !UPI_PATTERN.test(normalizedUpi)) {
+          return state;
+        }
+      } else if (!normalizedLast4 || !/^\d{4}$/.test(normalizedLast4)) {
+        return state;
+      }
+
+      const shouldSetDefault = Boolean(input.setAsDefault) || state.walletMethods.length === 0;
+      const nextId = `wallet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      const nextMethod: CustomerWalletMethod = {
+        id: nextId,
+        type: input.type,
+        label:
+          normalizedLabel ||
+          (isUpi
+            ? `UPI ${normalizedUpi}`
+            : `${input.type === 'DEBIT_CARD' ? 'Debit Card' : 'Credit Card'} •••• ${normalizedLast4}`),
+        cardLast4: isUpi ? undefined : normalizedLast4,
+        upiId: isUpi ? normalizedUpi : undefined,
+        isDefault: shouldSetDefault
+      };
+
+      const nextWalletMethods = shouldSetDefault
+        ? [
+            ...state.walletMethods.map((method) => ({
+              ...method,
+              isDefault: false
+            })),
+            nextMethod
+          ]
+        : [...state.walletMethods, nextMethod];
+
+      return {
+        walletMethods: nextWalletMethods,
+        defaultWalletMethodId: shouldSetDefault ? nextMethod.id : state.defaultWalletMethodId,
+        paymentMethod: shouldSetDefault
+          ? walletTypeToPaymentMethod(nextMethod.type)
+          : state.paymentMethod
+      };
+    });
+  },
+  setDefaultWalletMethod(methodId) {
+    set((state) => {
+      const target = state.walletMethods.find((method) => method.id === methodId);
+      if (!target) {
+        return state;
+      }
+
+      return {
+        walletMethods: state.walletMethods.map((method) => ({
+          ...method,
+          isDefault: method.id === methodId
+        })),
+        defaultWalletMethodId: methodId,
+        paymentMethod: walletTypeToPaymentMethod(target.type)
+      };
+    });
+  },
+  removeWalletMethod(methodId) {
+    set((state) => {
+      const remaining = state.walletMethods.filter((method) => method.id !== methodId);
+      if (remaining.length === state.walletMethods.length) {
+        return state;
+      }
+
+      const removedWasDefault = state.defaultWalletMethodId === methodId;
+      const fallbackDefault = removedWasDefault
+        ? remaining[0]
+        : remaining.find((method) => method.id === state.defaultWalletMethodId) ?? remaining[0];
+
+      return {
+        walletMethods: remaining.map((method) => ({
+          ...method,
+          isDefault: fallbackDefault ? method.id === fallbackDefault.id : false
+        })),
+        defaultWalletMethodId: fallbackDefault?.id,
+        paymentMethod: fallbackDefault
+          ? walletTypeToPaymentMethod(fallbackDefault.type)
+          : 'CASH'
+      };
+    });
   },
   resetBookingFlow() {
     set({

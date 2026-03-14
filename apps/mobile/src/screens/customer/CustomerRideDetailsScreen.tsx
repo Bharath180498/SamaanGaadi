@@ -5,6 +5,7 @@ import api from '../../services/api';
 import { isOngoingOrderStatus, useCustomerStore } from '../../store/useCustomerStore';
 import type { RootStackParamList } from '../../types/navigation';
 import { DeliverySignaturePreview } from '../../components/DeliverySignaturePreview';
+import { getCustomerPaymentStatusLabel, isCustomerPaymentPending } from './paymentState';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CustomerRideDetails'>;
 
@@ -44,6 +45,8 @@ interface RideDetailsResponse {
     status?: string | null;
     amount?: string | number | null;
     providerRef?: string | null;
+    directPayToDriver?: boolean | null;
+    directUpiVpa?: string | null;
     createdAt?: string;
     updatedAt?: string;
   } | null;
@@ -119,12 +122,42 @@ function prettify(input?: string | null) {
   return input.replace(/_/g, ' ');
 }
 
+function normalizeImageUrl(value: unknown) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  if (
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('file:') ||
+    /^https?:\/\//i.test(trimmed)
+  ) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('//')) {
+    return `https:${trimmed}`;
+  }
+
+  if (/^[\w.-]+\.[A-Za-z]{2,}(?:\/|$)/.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+
+  return trimmed;
+}
+
 export function CustomerRideDetailsScreen({ navigation, route }: Props) {
   const setActiveOrder = useCustomerStore((state) => state.setActiveOrder);
   const [ride, setRide] = useState<RideDetailsResponse | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
+  const [proofImageFailed, setProofImageFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,16 +209,24 @@ export function CustomerRideDetailsScreen({ navigation, route }: Props) {
 
   const deliveryProof = ride?.trip?.deliveryProof;
   const proofReceiver = typeof deliveryProof?.receiverName === 'string' ? deliveryProof.receiverName : '';
-  const proofPhotoUrl = typeof deliveryProof?.photoUrl === 'string' ? deliveryProof.photoUrl : '';
+  const proofPhotoUrl = normalizeImageUrl(deliveryProof?.photoUrl);
   const proofCapturedAt =
     typeof deliveryProof?.signatureCapturedAt === 'string'
       ? deliveryProof.signatureCapturedAt
       : typeof deliveryProof?.createdAt === 'string'
       ? deliveryProof.createdAt
       : undefined;
+  const showProofPhoto = Boolean(proofPhotoUrl) && !proofImageFailed;
   const hasDeliveryProof = Boolean(proofReceiver || proofPhotoUrl || deliveryProof?.receiverSignature);
-  const paymentStatus = String(ride?.payment?.status ?? 'PENDING').toUpperCase();
-  const paymentPending = paymentStatus !== 'CAPTURED' && ride?.status !== 'CANCELLED';
+  const paymentStatusLabel = getCustomerPaymentStatusLabel({
+    orderStatus: ride?.status,
+    payment: ride?.payment
+  });
+  const paymentPending = isCustomerPaymentPending({
+    orderStatus: ride?.status,
+    payment: ride?.payment
+  });
+  const paymentDirectToDriver = Boolean(ride?.payment?.directPayToDriver);
   const driverPreferredPayment = ride?.trip?.driverPreferredPaymentLabel ?? ride?.trip?.driverPreferredUpiId;
 
   const openTracking = () => {
@@ -204,6 +245,10 @@ export function CustomerRideDetailsScreen({ navigation, route }: Props) {
     navigation.navigate('CustomerPayment');
   };
 
+  useEffect(() => {
+    setProofImageFailed(false);
+  }, [proofPhotoUrl]);
+
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
@@ -217,7 +262,7 @@ export function CustomerRideDetailsScreen({ navigation, route }: Props) {
 
         {loading ? (
           <View style={styles.loadingWrap}>
-            <ActivityIndicator color="#0F766E" size="large" />
+            <ActivityIndicator color="#1D4ED8" size="large" />
             <Text style={styles.loadingText}>Loading ride details...</Text>
           </View>
         ) : error || !ride ? (
@@ -276,12 +321,28 @@ export function CustomerRideDetailsScreen({ navigation, route }: Props) {
             {hasDeliveryProof ? (
               <View style={styles.sectionCard}>
                 <Text style={styles.sectionTitle}>Proof of Delivery</Text>
-                <Text style={styles.lineItem}>Receiver: {proofReceiver || 'Captured'}</Text>
-                <Text style={styles.lineItem}>Captured: {formatDateTime(proofCapturedAt)}</Text>
-                {proofPhotoUrl ? (
-                  <Image source={{ uri: proofPhotoUrl }} style={styles.proofImage} resizeMode="cover" />
-                ) : null}
-                <DeliverySignaturePreview signature={deliveryProof?.receiverSignature} height={108} />
+                <ScrollView
+                  style={styles.proofBodyScroll}
+                  contentContainerStyle={styles.proofBodyContent}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator={false}
+                >
+                  <Text style={styles.lineItem}>Receiver: {proofReceiver || 'Captured'}</Text>
+                  <Text style={styles.lineItem}>Captured: {formatDateTime(proofCapturedAt)}</Text>
+                  {showProofPhoto ? (
+                    <Image
+                      source={{ uri: proofPhotoUrl }}
+                      style={styles.proofImage}
+                      resizeMode="cover"
+                      onError={() => setProofImageFailed(true)}
+                    />
+                  ) : proofPhotoUrl ? (
+                    <Text style={styles.proofFallbackText}>
+                      Photo preview is unavailable for this trip. Pull to refresh and try again.
+                    </Text>
+                  ) : null}
+                  <DeliverySignaturePreview signature={deliveryProof?.receiverSignature} height={108} />
+                </ScrollView>
               </View>
             ) : null}
 
@@ -296,7 +357,13 @@ export function CustomerRideDetailsScreen({ navigation, route }: Props) {
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>Payment</Text>
               <Text style={styles.lineItem}>Provider: {prettify(ride.payment?.provider)}</Text>
-              <Text style={styles.lineItem}>Status: {prettify(ride.payment?.status)}</Text>
+              <Text style={styles.lineItem}>Status: {prettify(paymentStatusLabel)}</Text>
+              <Text style={styles.lineItem}>
+                Settlement: {paymentDirectToDriver ? 'Driver UPI Direct' : 'QARGO Escrow'}
+              </Text>
+              {paymentDirectToDriver ? (
+                <Text style={styles.lineItem}>Direct UPI: {ride.payment?.directUpiVpa ?? 'N/A'}</Text>
+              ) : null}
               <Text style={styles.lineItem}>Amount: {formatInr(ride.payment?.amount ?? ride.finalPrice ?? ride.estimatedPrice)}</Text>
               <Text style={styles.lineItem}>Provider Ref: {ride.payment?.providerRef ?? 'N/A'}</Text>
               <Text style={styles.lineItem}>Updated: {formatDateTime(ride.payment?.updatedAt)}</Text>
@@ -346,7 +413,7 @@ export function CustomerRideDetailsScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FFF8F1' },
+  safe: { flex: 1, backgroundColor: '#EFF6FF' },
   container: {
     flex: 1,
     alignItems: 'center',
@@ -401,12 +468,12 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     borderRadius: 10,
-    backgroundColor: '#0F766E',
+    backgroundColor: '#1D4ED8',
     paddingHorizontal: 16,
     paddingVertical: 10
   },
   retryText: {
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     fontFamily: 'Manrope_700Bold',
     fontSize: 13
   },
@@ -420,8 +487,8 @@ const styles = StyleSheet.create({
   statusCard: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#D1FAE5',
-    backgroundColor: '#F0FDF4',
+    borderColor: '#DBEAFE',
+    backgroundColor: '#F8FAFF',
     padding: 12,
     gap: 6
   },
@@ -432,12 +499,12 @@ const styles = StyleSheet.create({
     gap: 8
   },
   statusTitle: {
-    color: '#166534',
+    color: '#1E40AF',
     fontFamily: 'Sora_700Bold',
     fontSize: 16
   },
   statusMeta: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 11
   },
@@ -449,12 +516,12 @@ const styles = StyleSheet.create({
   trackButton: {
     marginTop: 4,
     borderRadius: 10,
-    backgroundColor: '#0F766E',
+    backgroundColor: '#1D4ED8',
     paddingVertical: 10,
     alignItems: 'center'
   },
   trackButtonText: {
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     fontFamily: 'Manrope_700Bold',
     fontSize: 13
   },
@@ -497,7 +564,7 @@ const styles = StyleSheet.create({
   },
   billFinal: {
     marginTop: 2,
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 14
   },
@@ -506,8 +573,19 @@ const styles = StyleSheet.create({
     height: 150,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
-    backgroundColor: '#DCFCE7'
+    borderColor: '#DBEAFE',
+    backgroundColor: '#DBEAFE'
+  },
+  proofBodyScroll: {
+    maxHeight: 320
+  },
+  proofBodyContent: {
+    gap: 6
+  },
+  proofFallbackText: {
+    color: '#B45309',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 12
   },
   timelineItem: {
     borderRadius: 10,

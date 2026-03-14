@@ -1,5 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AvailabilityStatus, OrderStatus, Prisma, TripStatus } from '@prisma/client';
+import {
+  AvailabilityStatus,
+  OrderStatus,
+  PaymentProvider,
+  PaymentStatus,
+  Prisma,
+  TripStatus
+} from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -390,6 +397,32 @@ export class TripsService {
       throw new BadRequestException('Trip must be in transit before completion');
     }
 
+    const payment = await this.prisma.payment.findUnique({
+      where: {
+        orderId: trip.orderId
+      }
+    });
+
+    if (
+      payment?.provider === PaymentProvider.UPI &&
+      payment.directPayToDriver &&
+      payment.status !== PaymentStatus.CAPTURED
+    ) {
+      throw new BadRequestException(
+        'Direct UPI payment is still pending. Ask customer to complete payment before marking trip delivered.'
+      );
+    }
+
+    if (
+      payment &&
+      payment.provider !== PaymentProvider.WALLET &&
+      payment.status !== PaymentStatus.CAPTURED
+    ) {
+      throw new BadRequestException(
+        'Payment is still pending. Ask customer to complete payment before marking trip delivered.'
+      );
+    }
+
     const receiverName = payload.receiverName.trim();
     if (receiverName.length < 2) {
       throw new BadRequestException('Receiver name is required for delivery proof');
@@ -439,13 +472,51 @@ export class TripsService {
         }
       });
 
+      const finalFare = Number(
+        (Number(trip.order.estimatedPrice) + Number(updatedTrip.waitingCharge)).toFixed(2)
+      );
+
       await tx.order.update({
         where: { id: trip.orderId },
         data: {
           status: OrderStatus.DELIVERED,
-          finalPrice: Number(trip.order.estimatedPrice) + Number(updatedTrip.waitingCharge)
+          finalPrice: finalFare
         }
       });
+
+      const existingPayment = await tx.payment.findUnique({
+        where: {
+          orderId: trip.orderId
+        }
+      });
+
+      if (!existingPayment) {
+        await tx.payment.create({
+          data: {
+            orderId: trip.orderId,
+            provider: PaymentProvider.WALLET,
+            amount: finalFare,
+            status: PaymentStatus.CAPTURED,
+            providerRef: `driver_collected_${Date.now()}`
+          }
+        });
+      } else {
+        const paymentUpdate: Prisma.PaymentUpdateInput = {
+          amount: finalFare
+        };
+
+        if (existingPayment.provider === PaymentProvider.WALLET) {
+          paymentUpdate.status = PaymentStatus.CAPTURED;
+          if (!existingPayment.providerRef) {
+            paymentUpdate.providerRef = `driver_collected_${Date.now()}`;
+          }
+        }
+
+        await tx.payment.update({
+          where: { id: existingPayment.id },
+          data: paymentUpdate
+        });
+      }
 
       await tx.driverProfile.update({
         where: { id: driverId },

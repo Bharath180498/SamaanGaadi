@@ -16,7 +16,14 @@
         "googleMapsApiKey": "AIzaSyBa4kGEsQMiWJrrpEi_4AyZq-qBFgdzfGQ"
       },
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Qargo uses your location for live pickup, drop, and driver tracking."
+        "NSLocationWhenInUseUsageDescription": "Qargo uses your location for live pickup, drop, and driver tracking.",
+        "LSApplicationQueriesSchemes": [
+          "upi",
+          "tez",
+          "phonepe",
+          "paytmmp",
+          "bhim"
+        ]
       }
     },
     "android": {

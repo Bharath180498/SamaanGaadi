@@ -14,10 +14,12 @@ import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { AnimatedTextField } from '../../components/AnimatedTextField';
 import { FormScreen } from '../../components/FormScreen';
 import { OnboardingCoachBanner } from '../../components/OnboardingCoachBanner';
+import { useDriverI18n } from '../../i18n/useDriverI18n';
 
 type Props = NativeStackScreenProps<OnboardingStackParamList, 'OnboardingProfile'>;
 
 export function OnboardingProfileScreen({ navigation }: Props) {
+  const { t } = useDriverI18n();
   const loading = useOnboardingStore((state) => state.loading);
   const load = useOnboardingStore((state) => state.load);
   const updateProfile = useOnboardingStore((state) => state.updateProfile);
@@ -50,7 +52,7 @@ export function OnboardingProfileScreen({ navigation }: Props) {
 
   const save = async () => {
     if (!fullName.trim() || !phone.trim()) {
-      Alert.alert('Required details missing', 'Enter full name and phone to continue.');
+      Alert.alert(t('onboarding.profile.requiredTitle'), t('onboarding.profile.requiredBody'));
       return;
     }
 
@@ -65,7 +67,7 @@ export function OnboardingProfileScreen({ navigation }: Props) {
       navigation.navigate('OnboardingVehicle');
     } catch {
       const latestError = useOnboardingStore.getState().error;
-      Alert.alert('Could not save', latestError ?? 'Please check details and retry.');
+      Alert.alert(t('onboarding.profile.saveErrorTitle'), latestError ?? t('onboarding.profile.saveErrorBody'));
     }
   };
 
@@ -73,32 +75,32 @@ export function OnboardingProfileScreen({ navigation }: Props) {
     <FormScreen>
       <View style={styles.container}>
         <OnboardingCoachBanner step={1} total={5} tipKey="onboarding.help.profile" />
-        <Text style={styles.title}>Onboarding: Profile</Text>
+        <Text style={styles.title}>{t('onboarding.profile.title')}</Text>
         <View style={styles.card}>
           <AnimatedTextField
-            label="Full name"
+            label={t('onboarding.field.fullName')}
             value={fullName}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setFullName(value);
             }}
-            placeholder="Ravi Kumar"
+            placeholder={t('onboarding.placeholder.fullName')}
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="Phone"
+            label={t('onboarding.field.phone')}
             value={phone}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setPhone(value);
             }}
             keyboardType="phone-pad"
-            placeholder="+91 90000 00000"
+            placeholder={t('onboarding.placeholder.phone')}
             autoCapitalize="none"
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="Email"
+            label={t('onboarding.field.email')}
             value={email}
             onChangeText={(value) => {
               setHasLocalEdits(true);
@@ -106,17 +108,17 @@ export function OnboardingProfileScreen({ navigation }: Props) {
             }}
             autoCapitalize="none"
             keyboardType="email-address"
-            placeholder="name@example.com"
+            placeholder={t('onboarding.placeholder.email')}
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="City"
+            label={t('onboarding.field.city')}
             value={city}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setCity(value);
             }}
-            placeholder="Bengaluru"
+            placeholder={t('onboarding.placeholder.city')}
             returnKeyType="done"
           />
 
@@ -126,7 +128,7 @@ export function OnboardingProfileScreen({ navigation }: Props) {
             {loading ? (
               <ActivityIndicator color={colors.white} />
             ) : (
-              <Text style={styles.buttonText}>Save & Continue</Text>
+              <Text style={styles.buttonText}>{t('onboarding.saveContinue')}</Text>
             )}
           </Pressable>
         </View>

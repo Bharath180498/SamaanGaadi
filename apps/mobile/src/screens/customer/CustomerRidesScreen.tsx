@@ -6,6 +6,7 @@ import { isOngoingOrderStatus, useCustomerStore } from '../../store/useCustomerS
 import { useSessionStore } from '../../store/useSessionStore';
 import type { RootStackParamList } from '../../types/navigation';
 import { CustomerSideDrawer, type DrawerRoute } from '../../components/CustomerSideDrawer';
+import { isCustomerPaymentPending } from './paymentState';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CustomerRides'>;
 type RideFilter = 'ALL' | 'ONGOING' | 'DELIVERED' | 'CANCELLED';
@@ -24,7 +25,9 @@ interface OrderRow {
     } | null;
   } | null;
   payment?: {
+    provider?: string | null;
     status?: string | null;
+    directPayToDriver?: boolean | null;
   } | null;
 }
 
@@ -206,7 +209,11 @@ export function CustomerRidesScreen({ navigation }: Props) {
                   </View>
                   <Text style={styles.cardLine}>From: {order.pickupAddress}</Text>
                   <Text style={styles.cardLine}>To: {order.dropAddress}</Text>
-                  {order.status === 'DELIVERED' && String(order.payment?.status ?? '').toUpperCase() !== 'CAPTURED' ? (
+                  {order.status === 'DELIVERED' &&
+                  isCustomerPaymentPending({
+                    orderStatus: order.status,
+                    payment: order.payment
+                  }) ? (
                     <Text style={styles.paymentPendingBadge}>Payment pending • Tap to pay</Text>
                   ) : null}
                   {order.status === 'DELIVERED' && order.trip?.deliveryProof?.id ? (
@@ -234,7 +241,7 @@ export function CustomerRidesScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FFF8F1' },
+  safe: { flex: 1, backgroundColor: '#EFF6FF' },
   container: {
     flex: 1,
     alignItems: 'center',
@@ -386,7 +393,7 @@ const styles = StyleSheet.create({
   },
   cardPrice: {
     fontFamily: 'Sora_700Bold',
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontSize: 14
   },
   cardLine: {
@@ -406,11 +413,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: '#6EE7B7',
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 9,
     paddingVertical: 3,
     fontFamily: 'Manrope_700Bold',
-    color: '#047857',
+    color: '#2563EB',
     fontSize: 11
   },
   paymentPendingBadge: {
@@ -429,7 +436,7 @@ const styles = StyleSheet.create({
   cardAction: {
     marginTop: 4,
     fontFamily: 'Manrope_700Bold',
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontSize: 12
   }
 });

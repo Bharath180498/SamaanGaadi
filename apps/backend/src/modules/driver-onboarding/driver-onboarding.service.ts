@@ -98,7 +98,10 @@ export class DriverOnboardingService {
       if (qrImageUrl && !existing.qrImageUrl) {
         await this.prisma.driverPaymentMethod.update({
           where: { id: existing.id },
-          data: { qrImageUrl }
+          data: {
+            qrImageUrl,
+            type: DriverPaymentMethodType.UPI_QR
+          }
         });
       }
       return;
@@ -118,8 +121,8 @@ export class DriverOnboardingService {
       data: {
         userId,
         driverId: driverProfile?.id,
-        type: DriverPaymentMethodType.UPI_QR,
-        label: shouldPrefer ? 'Primary UPI' : 'UPI QR',
+        type: qrImageUrl ? DriverPaymentMethodType.UPI_QR : DriverPaymentMethodType.UPI_VPA,
+        label: shouldPrefer ? 'Primary UPI' : qrImageUrl ? 'UPI QR' : 'UPI',
         upiId: normalizedUpiId,
         qrImageUrl: qrImageUrl ?? undefined,
         isPreferred: shouldPrefer
@@ -249,7 +252,9 @@ export class DriverOnboardingService {
         data: {
           userId: payload.userId,
           driverId,
-          type: payload.type ?? DriverPaymentMethodType.UPI_QR,
+          type:
+            payload.type ??
+            (normalizedQrImageUrl ? DriverPaymentMethodType.UPI_QR : DriverPaymentMethodType.UPI_VPA),
           label: normalizedLabel,
           upiId: normalizedUpiId,
           qrImageUrl: normalizedQrImageUrl,
@@ -527,7 +532,7 @@ export class DriverOnboardingService {
     });
 
     if (activePaymentMethods === 0) {
-      throw new BadRequestException('Upload at least one UPI QR payment method before submitting onboarding');
+      throw new BadRequestException('Add at least one UPI payment method before submitting onboarding');
     }
 
     return this.prisma.driverOnboarding.update({

@@ -212,6 +212,35 @@ export class KycService {
     });
   }
 
+  history(status: KycVerificationStatus = KycVerificationStatus.VERIFIED, limit = 100) {
+    const take = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 500) : 100;
+
+    return this.prisma.kycVerification.findMany({
+      where: { status },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true
+          }
+        },
+        onboarding: true,
+        reviewedByAdmin: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true
+          }
+        }
+      },
+      orderBy: [{ reviewedAt: 'desc' }, { createdAt: 'desc' }],
+      take
+    });
+  }
+
   async reviewDetails(verificationId: string) {
     const verification = await this.prisma.kycVerification.findUnique({
       where: { id: verificationId },

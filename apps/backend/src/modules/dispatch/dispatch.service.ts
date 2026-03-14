@@ -62,6 +62,25 @@ export class DispatchService {
     return this.redisService.getClient();
   }
 
+  private parseMoney(value: unknown) {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 0;
+    }
+
+    return parsed;
+  }
+
+  private estimateDriverPayoutInr(order: {
+    finalPrice?: unknown;
+    estimatedPrice?: unknown;
+    waitingCharge?: unknown;
+  }) {
+    const fare = this.parseMoney(order.finalPrice ?? order.estimatedPrice);
+    const waitingCharge = this.parseMoney(order.waitingCharge);
+    return Number((fare + waitingCharge).toFixed(2));
+  }
+
   private vehicleRank(vehicleType: VehicleType) {
     if (vehicleType === VehicleType.THREE_WHEELER) {
       return 1;
@@ -954,7 +973,13 @@ export class DispatchService {
       orderBy: { createdAt: 'desc' }
     });
 
-    return pending.filter((offer) => offer.expiresAt.getTime() > Date.now());
+    return pending
+      .filter((offer) => offer.expiresAt.getTime() > Date.now())
+      .map((offer) => ({
+        ...offer,
+        estimatedDriverPayoutInr: this.estimateDriverPayoutInr(offer.order),
+        currency: 'INR'
+      }));
   }
 
   async getDispatchDecisions(orderId: string): Promise<DispatchDecision[]> {

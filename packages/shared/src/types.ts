@@ -76,6 +76,8 @@ export interface TripOffer {
   routeEtaMinutes: number;
   distanceKm?: number;
   vehicleMatchType: VehicleMatchType;
+  estimatedDriverPayoutInr?: number;
+  currency?: 'INR';
 }
 
 export interface OtpRequestInput {

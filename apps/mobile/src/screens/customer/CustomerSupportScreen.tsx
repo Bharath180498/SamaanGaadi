@@ -22,8 +22,9 @@ type Props = NativeStackScreenProps<RootStackParamList, 'CustomerSupport'>;
 
 type TicketStatus = 'OPEN' | 'IN_PROGRESS' | 'WAITING_FOR_USER' | 'RESOLVED';
 const RESOLUTION_TARGET_HOURS = 6;
-const CALL_ESCALATION_HOURS = 24;
+const CALL_ESCALATION_HOURS = 6;
 const CALL_ESCALATION_MS = CALL_ESCALATION_HOURS * 60 * 60 * 1000;
+const ESCALATION_LONG_PRESS_MS = 1800;
 
 interface SupportTicket {
   id: string;
@@ -178,15 +179,15 @@ export function CustomerSupportScreen({ navigation }: Props) {
     if (tickets.length === 0) {
       Alert.alert(
         'Message support first',
-        `Please create a ticket first. We aim to resolve within ${RESOLUTION_TARGET_HOURS} hours. If you do not hear back within ${CALL_ESCALATION_HOURS} hours, call support.`
+        `Please create a support ticket first and wait up to ${RESOLUTION_TARGET_HOURS} hours. We usually respond much faster.`
       );
       return;
     }
 
     if (!escalationEligible) {
       Alert.alert(
-        'Please wait for first response',
-        `Support is working on your ticket. We aim to resolve within ${RESOLUTION_TARGET_HOURS} hours. If there is no resolution in ${CALL_ESCALATION_HOURS} hours, call support to escalate.`
+        'Please wait for support response',
+        `Support is actively working on your ticket. Please allow up to ${RESOLUTION_TARGET_HOURS} hours for resolution before phone escalation unlocks.`
       );
       return;
     }
@@ -266,22 +267,26 @@ export function CustomerSupportScreen({ navigation }: Props) {
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void loadTickets(true)} tintColor="#0F766E" />
+            <RefreshControl refreshing={refreshing} onRefresh={() => void loadTickets(true)} tintColor="#1D4ED8" />
           }
         >
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Message first, then escalate if needed</Text>
-            <Text style={styles.info}>We aim to resolve support tickets within {RESOLUTION_TARGET_HOURS} hours.</Text>
+            <Text style={styles.cardTitle}>Text support first</Text>
+            <Text style={styles.info}>Please message us in this chat first.</Text>
             <Text style={styles.info}>
-              If there is no resolution within {CALL_ESCALATION_HOURS} hours, call support to escalate.
+              Please wait up to {RESOLUTION_TARGET_HOURS} hours for a resolution update. We usually reply faster.
             </Text>
             <Text style={[styles.meta, escalationEligible ? styles.metaReady : undefined]}>
               {escalationEligible
-                ? `Call escalation is available now.`
-                : `Call unlocks after ${CALL_ESCALATION_HOURS}h unresolved.`}
+                ? `Phone escalation is now unlocked.`
+                : `Phone escalation stays hidden until ${CALL_ESCALATION_HOURS}h unresolved.`}
             </Text>
-            <Pressable style={styles.callButton} onPress={() => void callSupport()}>
-              <Text style={styles.callButtonText}>Escalate by call</Text>
+            <Pressable
+              style={styles.hiddenEscalationTrigger}
+              onLongPress={() => void callSupport()}
+              delayLongPress={ESCALATION_LONG_PRESS_MS}
+            >
+              <Text style={styles.hiddenEscalationText}>Long-press here for phone escalation</Text>
             </Pressable>
           </View>
 
@@ -319,7 +324,7 @@ export function CustomerSupportScreen({ navigation }: Props) {
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Your Tickets</Text>
-            {loading ? <ActivityIndicator color="#0F766E" style={{ marginTop: 10 }} /> : null}
+            {loading ? <ActivityIndicator color="#1D4ED8" style={{ marginTop: 10 }} /> : null}
 
             {(tickets ?? []).map((ticket) => {
               const active = ticket.id === selectedTicketId;
@@ -387,7 +392,7 @@ export function CustomerSupportScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FFF8F1' },
+  safe: { flex: 1, backgroundColor: '#EFF6FF' },
   container: { flex: 1, alignItems: 'center' },
   headerRow: {
     width: '100%',
@@ -431,7 +436,7 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#FED7AA',
+    borderColor: '#BFDBFE',
     borderRadius: 16,
     padding: 14,
     gap: 8
@@ -452,25 +457,24 @@ const styles = StyleSheet.create({
     fontSize: 12
   },
   metaReady: {
-    color: '#0F766E'
+    color: '#1D4ED8'
   },
-  callButton: {
+  hiddenEscalationTrigger: {
     marginTop: 4,
-    borderRadius: 999,
-    backgroundColor: '#0F172A',
-    alignItems: 'center',
-    paddingVertical: 10
+    alignSelf: 'flex-start',
+    paddingVertical: 2,
+    paddingHorizontal: 4
   },
-  callButtonText: {
-    fontFamily: 'Manrope_700Bold',
-    color: '#F8FAFC',
-    fontSize: 14
+  hiddenEscalationText: {
+    fontFamily: 'Manrope_500Medium',
+    color: '#94A3B8',
+    fontSize: 11
   },
   input: {
     borderWidth: 1,
-    borderColor: '#FDBA74',
+    borderColor: '#93C5FD',
     borderRadius: 12,
-    backgroundColor: '#FFF7ED',
+    backgroundColor: '#F8FAFF',
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontFamily: 'Manrope_500Medium',
@@ -484,7 +488,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     marginTop: 4,
     borderRadius: 999,
-    backgroundColor: '#F97316',
+    backgroundColor: '#2563EB',
     alignItems: 'center',
     paddingVertical: 10
   },
@@ -498,15 +502,15 @@ const styles = StyleSheet.create({
   },
   ticketRow: {
     borderWidth: 1,
-    borderColor: '#FED7AA',
+    borderColor: '#BFDBFE',
     borderRadius: 12,
-    backgroundColor: '#FFFBEB',
+    backgroundColor: '#EFF6FF',
     padding: 10,
     gap: 2
   },
   ticketRowActive: {
-    borderColor: '#F97316',
-    backgroundColor: '#FFF7ED'
+    borderColor: '#2563EB',
+    backgroundColor: '#F8FAFF'
   },
   ticketSubject: {
     fontFamily: 'Manrope_700Bold',
@@ -523,9 +527,9 @@ const styles = StyleSheet.create({
   },
   messageBubble: {
     borderWidth: 1,
-    borderColor: '#FED7AA',
+    borderColor: '#BFDBFE',
     borderRadius: 12,
-    backgroundColor: '#FFF7ED',
+    backgroundColor: '#F8FAFF',
     padding: 10,
     gap: 4
   },

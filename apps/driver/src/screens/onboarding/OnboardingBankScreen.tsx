@@ -15,54 +15,16 @@ import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { AnimatedTextField } from '../../components/AnimatedTextField';
 import { FormScreen } from '../../components/FormScreen';
 import { OnboardingCoachBanner } from '../../components/OnboardingCoachBanner';
+import { buildUpiQrImageUrl, isValidUpiId, normalizeUpiId } from '../../utils/upi';
+import { useDriverI18n } from '../../i18n/useDriverI18n';
 
 type Props = NativeStackScreenProps<OnboardingStackParamList, 'OnboardingBank'>;
 
-interface PickedImage {
-  uri: string;
-  fileName?: string | null;
-  mimeType?: string | null;
-}
-
-async function pickQrImageFromLibrary(): Promise<PickedImage | null> {
-  try {
-    const ImagePicker = require('expo-image-picker') as {
-      MediaTypeOptions?: { Images?: unknown };
-      requestMediaLibraryPermissionsAsync: () => Promise<{ granted: boolean }>;
-      launchImageLibraryAsync: (options: Record<string, unknown>) => Promise<{
-        canceled: boolean;
-        assets?: PickedImage[];
-      }>;
-    };
-
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      throw new Error('Allow photo library access to upload QR image.');
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions?.Images,
-      allowsEditing: true,
-      quality: 0.8
-    });
-
-    if (result.canceled || !result.assets?.[0]) {
-      return null;
-    }
-
-    return result.assets[0];
-  } catch {
-    throw new Error(
-      'QR picker is unavailable. Install dependency with: npx expo install expo-image-picker'
-    );
-  }
-}
-
 export function OnboardingBankScreen({ navigation }: Props) {
+  const { t } = useDriverI18n();
   const loading = useOnboardingStore((state) => state.loading);
   const load = useOnboardingStore((state) => state.load);
   const updateBank = useOnboardingStore((state) => state.updateBank);
-  const uploadPaymentMethodQr = useOnboardingStore((state) => state.uploadPaymentMethodQr);
   const setPreferredPaymentMethod = useOnboardingStore((state) => state.setPreferredPaymentMethod);
   const removePaymentMethod = useOnboardingStore((state) => state.removePaymentMethod);
   const paymentMethods = useOnboardingStore((state) => state.paymentMethods);
@@ -103,57 +65,16 @@ export function OnboardingBankScreen({ navigation }: Props) {
     storeUpiId
   ]);
 
-  const pickAndUploadQr = async () => {
-    const normalizedUpi = upiId.trim().toLowerCase();
-    const upiPattern = /^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,}$/i;
-
-    if (!normalizedUpi || !upiPattern.test(normalizedUpi)) {
-      Alert.alert('UPI first', 'Enter a valid UPI ID before adding QR code.');
-      return;
-    }
-
-    let asset: PickedImage | null = null;
-    try {
-      asset = await pickQrImageFromLibrary();
-    } catch (error: unknown) {
-      Alert.alert('QR upload setup required', String((error as Error)?.message ?? 'Unable to open image picker.'));
-      return;
-    }
-
-    if (!asset) {
-      return;
-    }
-
-    try {
-      await uploadPaymentMethodQr({
-        fileUri: asset.uri,
-        fileName: asset.fileName || undefined,
-        contentType: asset.mimeType || 'image/jpeg',
-        upiId: normalizedUpi,
-        label: `QR ${paymentMethods.length + 1}`,
-        isPreferred: paymentMethods.length === 0
-      });
-    } catch {
-      Alert.alert('Upload failed', useOnboardingStore.getState().error ?? 'Could not add QR code.');
-    }
-  };
-
   const save = async () => {
-    const normalizedUpi = upiId.trim().toLowerCase();
-    const upiPattern = /^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,}$/i;
+    const normalizedUpi = normalizeUpiId(upiId);
 
     if (!accountHolderName.trim() || !bankName.trim() || !accountNumber.trim() || !ifscCode.trim() || !normalizedUpi) {
-      Alert.alert('Required details missing', 'Complete required payout details to continue.');
+      Alert.alert(t('onboarding.bank.requiredTitle'), t('onboarding.bank.requiredBody'));
       return;
     }
 
-    if (!upiPattern.test(normalizedUpi)) {
-      Alert.alert('Invalid UPI ID', 'Enter a valid UPI ID (example: driver@okaxis).');
-      return;
-    }
-
-    if (paymentMethods.length === 0) {
-      Alert.alert('Add at least one QR', 'Upload one UPI QR image so customers can pay directly.');
+    if (!isValidUpiId(normalizedUpi)) {
+      Alert.alert(t('onboarding.bank.invalidUpiTitle'), t('onboarding.bank.invalidUpiBody'));
       return;
     }
 
@@ -169,7 +90,7 @@ export function OnboardingBankScreen({ navigation }: Props) {
       navigation.navigate('OnboardingDocuments');
     } catch {
       const latestError = useOnboardingStore.getState().error;
-      Alert.alert('Could not save', latestError ?? 'Please check payout details and retry.');
+      Alert.alert(t('onboarding.bank.saveErrorTitle'), latestError ?? t('onboarding.bank.saveErrorBody'));
     }
   };
 
@@ -177,107 +98,117 @@ export function OnboardingBankScreen({ navigation }: Props) {
     <FormScreen>
       <View style={styles.container}>
         <OnboardingCoachBanner step={3} total={5} tipKey="onboarding.help.payout" />
-        <Text style={styles.title}>Onboarding: Payout</Text>
+        <Text style={styles.title}>{t('onboarding.bank.title')}</Text>
         <View style={styles.card}>
           <AnimatedTextField
-            label="Account Holder"
+            label={t('onboarding.bank.accountHolder')}
             value={accountHolderName}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setAccountHolderName(value);
             }}
-            placeholder="Ravi Kumar"
+            placeholder={t('onboarding.placeholder.fullName')}
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="Bank Name"
+            label={t('onboarding.bank.bankName')}
             value={bankName}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setBankName(value);
             }}
-            placeholder="HDFC Bank"
+            placeholder={t('onboarding.placeholder.bankName')}
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="Account Number"
+            label={t('onboarding.bank.accountNumber')}
             value={accountNumber}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setAccountNumber(value);
             }}
             keyboardType="number-pad"
-            placeholder="123456789000"
+            placeholder={t('onboarding.placeholder.accountNumber')}
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="IFSC Code"
+            label={t('onboarding.bank.ifsc')}
             value={ifscCode}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setIfscCode(value);
             }}
             autoCapitalize="characters"
-            placeholder="HDFC0000123"
+            placeholder={t('onboarding.placeholder.ifsc')}
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="Primary UPI ID"
+            label={t('onboarding.bank.primaryUpi')}
             value={upiId}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setUpiId(value);
             }}
             autoCapitalize="none"
-            placeholder="ravi@okhdfcbank"
+            placeholder={t('onboarding.placeholder.upiId')}
             returnKeyType="done"
           />
 
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>UPI QR Codes</Text>
-            <Pressable style={styles.uploadQrButton} onPress={() => void pickAndUploadQr()} disabled={loading}>
-              <Text style={styles.uploadQrButtonText}>Upload QR</Text>
-            </Pressable>
+            <Text style={styles.sectionTitle}>{t('onboarding.bank.upiMethods')}</Text>
           </View>
+          <Text style={styles.helperText}>
+            {t('onboarding.bank.autoQrHint')}
+          </Text>
 
           <View style={styles.methodList}>
             {paymentMethods.length === 0 ? (
-              <Text style={styles.helperText}>No QR added yet. Upload one or more QR codes.</Text>
+              <Text style={styles.helperText}>{t('onboarding.bank.noMethods')}</Text>
             ) : (
-              paymentMethods.map((method) => (
-                <View key={method.id} style={[styles.methodCard, method.isPreferred && styles.methodCardPreferred]}>
-                  <View style={styles.methodTopRow}>
-                    <View style={styles.methodMeta}>
-                      <Text style={styles.methodTitle}>{method.label ?? 'UPI QR'}</Text>
-                      <Text style={styles.methodSubtitle}>{method.upiId}</Text>
+              paymentMethods.map((method) => {
+                const autoQrUrl = isValidUpiId(method.upiId)
+                  ? buildUpiQrImageUrl({
+                      upiId: method.upiId,
+                      payeeName: accountHolderName.trim() || 'Qargo Driver'
+                    })
+                  : undefined;
+                const qrImageUrl = method.qrImageUrl ?? autoQrUrl;
+
+                return (
+                  <View key={method.id} style={[styles.methodCard, method.isPreferred && styles.methodCardPreferred]}>
+                    <View style={styles.methodTopRow}>
+                      <View style={styles.methodMeta}>
+                        <Text style={styles.methodTitle}>{method.label ?? t('onboarding.bank.methodLabelFallback')}</Text>
+                        <Text style={styles.methodSubtitle}>{method.upiId}</Text>
+                      </View>
+                      {method.isPreferred ? <Text style={styles.preferredBadge}>{t('onboarding.bank.preferredBadge')}</Text> : null}
                     </View>
-                    {method.isPreferred ? <Text style={styles.preferredBadge}>Preferred</Text> : null}
-                  </View>
-                  {method.qrImageUrl ? (
-                    <Image source={{ uri: method.qrImageUrl }} style={styles.qrPreview} />
-                  ) : (
-                    <Text style={styles.helperText}>QR uploaded (preview unavailable in current storage mode)</Text>
-                  )}
-                  <View style={styles.methodActions}>
-                    {!method.isPreferred ? (
+                    {qrImageUrl ? (
+                      <Image source={{ uri: qrImageUrl }} style={styles.qrPreview} />
+                    ) : (
+                      <Text style={styles.helperText}>{t('onboarding.bank.invalidQr')}</Text>
+                    )}
+                    <View style={styles.methodActions}>
+                      {!method.isPreferred ? (
+                        <Pressable
+                          style={styles.methodActionButton}
+                          onPress={() => void setPreferredPaymentMethod(method.id)}
+                          disabled={loading}
+                        >
+                          <Text style={styles.methodActionText}>{t('onboarding.bank.setPreferred')}</Text>
+                        </Pressable>
+                      ) : null}
                       <Pressable
-                        style={styles.methodActionButton}
-                        onPress={() => void setPreferredPaymentMethod(method.id)}
+                        style={[styles.methodActionButton, styles.methodActionDanger]}
+                        onPress={() => void removePaymentMethod(method.id)}
                         disabled={loading}
                       >
-                        <Text style={styles.methodActionText}>Set preferred</Text>
+                        <Text style={[styles.methodActionText, styles.methodActionDangerText]}>{t('common.remove')}</Text>
                       </Pressable>
-                    ) : null}
-                    <Pressable
-                      style={[styles.methodActionButton, styles.methodActionDanger]}
-                      onPress={() => void removePaymentMethod(method.id)}
-                      disabled={loading}
-                    >
-                      <Text style={[styles.methodActionText, styles.methodActionDangerText]}>Remove</Text>
-                    </Pressable>
+                    </View>
                   </View>
-                </View>
-              ))
+                );
+              })
             )}
           </View>
 
@@ -287,7 +218,7 @@ export function OnboardingBankScreen({ navigation }: Props) {
             {loading ? (
               <ActivityIndicator color={colors.white} />
             ) : (
-              <Text style={styles.buttonText}>Save & Continue</Text>
+              <Text style={styles.buttonText}>{t('onboarding.saveContinue')}</Text>
             )}
           </Pressable>
         </View>
@@ -322,7 +253,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#EFF6FF',
     borderWidth: 1,
     borderColor: colors.secondary
   },
@@ -344,8 +275,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paper
   },
   methodCardPreferred: {
-    borderColor: '#0F766E',
-    backgroundColor: '#ECFDF5'
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF'
   },
   methodTopRow: {
     flexDirection: 'row',
@@ -368,8 +299,8 @@ const styles = StyleSheet.create({
   preferredBadge: {
     fontFamily: typography.bodyBold,
     fontSize: 11,
-    color: '#0F766E',
-    backgroundColor: '#CCFBF1',
+    color: '#1D4ED8',
+    backgroundColor: '#DBEAFE',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999

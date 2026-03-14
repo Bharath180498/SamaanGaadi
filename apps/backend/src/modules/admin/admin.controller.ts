@@ -8,12 +8,14 @@ import {
   UnauthorizedException,
   UseGuards
 } from '@nestjs/common';
+import { KycVerificationStatus } from '@prisma/client';
 import { AdminService } from './admin.service';
 import { ReviewKycDto } from './dto/review-kyc.dto';
 import { AdminAuthGuard } from '../../common/guards/admin-auth.guard';
 import { CurrentUser, RequestUser } from '../../common/decorators/current-user.decorator';
 import { AdminOperationsBookingsQueryDto } from './dto/admin-operations-bookings-query.dto';
 import { AdminOperationsRidesQueryDto } from './dto/admin-operations-rides-query.dto';
+import { AdminKycHistoryQueryDto } from './dto/admin-kyc-history-query.dto';
 
 @UseGuards(AdminAuthGuard)
 @Controller('admin')
@@ -68,6 +70,11 @@ export class AdminController {
   @Get('kyc/pending')
   pendingKyc() {
     return this.adminService.pendingKycReview();
+  }
+
+  @Get('kyc/history')
+  kycHistory(@Query() query: AdminKycHistoryQueryDto) {
+    return this.adminService.kycHistory(query.status ?? KycVerificationStatus.VERIFIED, query.limit);
   }
 
   @Get('kyc/:verificationId')

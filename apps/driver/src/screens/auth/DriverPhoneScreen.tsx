@@ -30,7 +30,7 @@ export function DriverPhoneScreen({ navigation }: Props) {
 
   const continueToOtp = async () => {
     if (!phone.trim()) {
-      Alert.alert('Phone required', 'Enter a valid phone number to continue.');
+      Alert.alert(t('auth.phoneRequiredTitle'), t('auth.phoneRequiredBody'));
       return;
     }
 
@@ -42,7 +42,7 @@ export function DriverPhoneScreen({ navigation }: Props) {
         name: name.trim() || undefined
       });
     } catch {
-      Alert.alert('Request failed', error ?? 'Could not send OTP. Retry in a moment.');
+      Alert.alert(t('auth.requestFailedTitle'), error ?? t('auth.requestFailedBody'));
     }
   };
 
@@ -58,14 +58,14 @@ export function DriverPhoneScreen({ navigation }: Props) {
             label={t('auth.name')}
             value={name}
             onChangeText={setName}
-            placeholder="Your name"
+            placeholder={t('auth.namePlaceholder')}
             returnKeyType="next"
           />
           <AnimatedTextField
             label={t('auth.phone')}
             value={phone}
             onChangeText={setPhone}
-            placeholder="+919000000101"
+            placeholder={t('auth.phonePlaceholder')}
             keyboardType="phone-pad"
             autoCapitalize="none"
             returnKeyType="done"
@@ -82,9 +82,9 @@ export function DriverPhoneScreen({ navigation }: Props) {
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
           {lastOtpCode ? (
-            <Text style={styles.mockHint}>Demo OTP (mock mode): {lastOtpCode}</Text>
+            <Text style={styles.mockHint}>{t('auth.mockOtpDemo', { code: lastOtpCode })}</Text>
           ) : (
-            <Text style={styles.mockHint}>OTP will be delivered via configured provider.</Text>
+            <Text style={styles.mockHint}>{t('auth.mockOtpProvider')}</Text>
           )}
         </View>
       </View>

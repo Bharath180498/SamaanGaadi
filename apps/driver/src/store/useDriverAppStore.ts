@@ -29,6 +29,9 @@ interface DriverEarnings {
     tripId: string;
     orderId: string;
     fare: number;
+    waitingCharge?: number;
+    distanceKm?: number;
+    durationMinutes?: number;
     deliveredAt?: string;
   }>;
 }
@@ -96,7 +99,7 @@ interface DriverAppState {
   error?: string;
   bootstrap: () => Promise<void>;
   refreshJobs: () => Promise<void>;
-  refreshEarnings: () => Promise<void>;
+  refreshEarnings: (query?: { from?: string; to?: string }) => Promise<void>;
   refreshSubscriptionCatalog: () => Promise<void>;
   setSubscriptionPlan: (
     plan: 'GO' | 'PRO' | 'ENTERPRISE',
@@ -125,6 +128,42 @@ function readError(error: unknown, fallback: string) {
     typeof (error as { message?: unknown }).message === 'string'
     ? (error as { message: string }).message
     : fallback;
+}
+
+async function photoUriToDataUrl(photoUri: string, fallbackMimeType: string) {
+  try {
+    const response = await fetch(photoUri);
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const blob = await response.blob();
+    const resolvedMimeType = (blob.type || fallbackMimeType || 'image/jpeg').trim() || 'image/jpeg';
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Could not read delivery photo'));
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          resolve(reader.result);
+          return;
+        }
+        reject(new Error('Could not encode delivery photo'));
+      };
+      reader.readAsDataURL(blob);
+    });
+
+    if (dataUrl.startsWith('data:')) {
+      return dataUrl;
+    }
+
+    const base64Payload = dataUrl.trim();
+    if (!base64Payload) {
+      return undefined;
+    }
+    return `data:${resolvedMimeType};base64,${base64Payload}`;
+  } catch {
+    return undefined;
+  }
 }
 
 export const useDriverAppStore = create<DriverAppState>((set, get) => ({
@@ -233,13 +272,15 @@ export const useDriverAppStore = create<DriverAppState>((set, get) => ({
             (get().availabilityStatus === 'OFFLINE' ? 'OFFLINE' : 'ONLINE'))
     });
   },
-  async refreshEarnings() {
+  async refreshEarnings(query) {
     const driverProfileId = get().driverProfileId;
     if (!driverProfileId) {
       return;
     }
 
-    const response = await api.get(`/drivers/${driverProfileId}/earnings`);
+    const response = await api.get(`/drivers/${driverProfileId}/earnings`, {
+      params: query
+    });
     set({ earnings: response.data });
   },
   async refreshSubscriptionCatalog() {
@@ -352,6 +393,7 @@ export const useDriverAppStore = create<DriverAppState>((set, get) => ({
       const fileUrl = String(upload.data?.fileUrl ?? '');
       const fileKey = String(upload.data?.fileKey ?? '');
       const resolvedContentType = String(upload.data?.contentType ?? requestedContentType);
+      let deliveryPhotoUrl = fileUrl;
 
       if (!fileUrl || !fileKey) {
         throw new Error('Delivery proof upload endpoint returned invalid file metadata');
@@ -375,13 +417,18 @@ export const useDriverAppStore = create<DriverAppState>((set, get) => ({
         if (!putResponse.ok) {
           throw new Error('Could not upload delivery proof photo');
         }
+      } else if (uploadUrl.startsWith('mock://')) {
+        const inlineDataUrl = await photoUriToDataUrl(payload.photoUri, resolvedContentType);
+        if (inlineDataUrl) {
+          deliveryPhotoUrl = inlineDataUrl;
+        }
       }
 
       await get().runTripAction(tripId, 'complete', {
         receiverName: payload.receiverName,
         receiverSignature: payload.receiverSignature,
         deliveryPhotoFileKey: fileKey,
-        deliveryPhotoUrl: fileUrl,
+        deliveryPhotoUrl,
         deliveryPhotoMimeType: resolvedContentType,
         distanceKm: payload.distanceKm,
         durationMinutes: payload.durationMinutes

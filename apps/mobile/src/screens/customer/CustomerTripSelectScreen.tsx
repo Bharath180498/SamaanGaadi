@@ -14,22 +14,23 @@ import type { InsurancePlan, VehicleType } from '@porter/shared';
 import { VEHICLE_UI_META } from '@porter/shared';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../types/navigation';
-import { type PaymentMethod, useCustomerStore } from '../../store/useCustomerStore';
+import {
+  type CustomerWalletMethod,
+  type PaymentMethod,
+  useCustomerStore
+} from '../../store/useCustomerStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import MapView, { Marker, Polyline } from '../../components/maps';
 import api from '../../services/api';
 import appConfig from '../../../app.json';
+import {
+  buildSimulatedNearbyVehicles,
+  shouldRecenterSimulatedVehicles
+} from '../../utils/nearbyVehicleSimulation';
 
 interface RouteCoordinate {
   latitude: number;
   longitude: number;
-}
-
-interface VirtualTruckMarker {
-  id: string;
-  latitude: number;
-  longitude: number;
-  distanceKm: number;
 }
 
 const MOBILE_GOOGLE_MAPS_API_KEY =
@@ -49,14 +50,20 @@ const MOBILE_GOOGLE_MAPS_API_KEY =
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CustomerTripSelect'>;
 
-const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+const FALLBACK_PAYMENT_LABELS: Record<PaymentMethod, string> = {
   VISA_5496: 'Visa ....5496',
   MASTERCARD_6802: 'Mastercard ....6802',
   UPI_SCAN_PAY: 'UPI Scan and Pay',
   DRIVER_UPI_DIRECT: 'Driver UPI (direct)',
-  CASH: 'Cash'
+  CASH: 'Cash on delivery'
 };
-const CARD_METHODS: PaymentMethod[] = ['VISA_5496', 'MASTERCARD_6802'];
+
+function walletMethodLabel(method: CustomerWalletMethod) {
+  if (method.type === 'UPI_ID') {
+    return method.upiId ?? method.label;
+  }
+  return method.label;
+}
 
 const INSURANCE_LABELS: Record<InsurancePlan, string> = {
   NONE: 'No cover',
@@ -133,22 +140,6 @@ function extractErrorMessage(error: unknown, fallback: string) {
   }
 
   return fallback;
-}
-
-function buildVirtualTruckMarkers(anchor: { lat: number; lng: number }, count = 3): VirtualTruckMarker[] {
-  const offsets = [
-    { lat: 0.0032, lng: 0.0011 },
-    { lat: -0.0026, lng: 0.0025 },
-    { lat: 0.0018, lng: -0.0031 },
-    { lat: -0.0034, lng: -0.0016 }
-  ];
-
-  return offsets.slice(0, count).map((offset, index) => ({
-    id: `virtual-${index + 1}`,
-    latitude: anchor.lat + offset.lat,
-    longitude: anchor.lng + offset.lng,
-    distanceKm: Math.round(Math.sqrt(offset.lat ** 2 + offset.lng ** 2) * 111 * 10) / 10
-  }));
 }
 
 function defaultScheduleDateInput() {
@@ -376,6 +367,8 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
     insuranceSelected,
     minDriverRating,
     paymentMethod,
+    walletMethods,
+    defaultWalletMethodId,
     createBooking,
     creating,
     estimateLoading,
@@ -386,12 +379,37 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
   const [customScheduleEnabled, setCustomScheduleEnabled] = useState(false);
   const [customScheduleDate, setCustomScheduleDate] = useState(defaultScheduleDateInput);
   const [customScheduleTime, setCustomScheduleTime] = useState(defaultScheduleTimeInput);
+  const [virtualMarkerAnchor, setVirtualMarkerAnchor] = useState({
+    lat: draftPickup?.lat ?? FALLBACK_CENTER.lat,
+    lng: draftPickup?.lng ?? FALLBACK_CENTER.lng
+  });
 
   const hasRoute = Boolean(draftPickup && draftDrop);
   const selectedMeta = selectedVehicle ? VEHICLE_UI_META[selectedVehicle.vehicleType] : null;
-  const cardSurchargeNote = CARD_METHODS.includes(paymentMethod)
-    ? 'Card payments include a 2.5% processing surcharge'
-    : null;
+  const selectedUpiWalletMethod =
+    walletMethods.find((method) => method.id === defaultWalletMethodId && method.type === 'UPI_ID') ??
+    walletMethods.find((method) => method.isDefault && method.type === 'UPI_ID') ??
+    walletMethods.find((method) => method.type === 'UPI_ID');
+  const selectedCardWalletMethod =
+    walletMethods.find((method) => method.id === defaultWalletMethodId && method.type !== 'UPI_ID') ??
+    walletMethods.find((method) => method.isDefault && method.type !== 'UPI_ID') ??
+    walletMethods.find((method) => method.type !== 'UPI_ID');
+  const selectedPaymentLabel =
+    paymentMethod === 'CASH'
+      ? FALLBACK_PAYMENT_LABELS.CASH
+      : paymentMethod === 'DRIVER_UPI_DIRECT'
+        ? FALLBACK_PAYMENT_LABELS.DRIVER_UPI_DIRECT
+        : paymentMethod === 'UPI_SCAN_PAY'
+          ? selectedUpiWalletMethod
+            ? walletMethodLabel(selectedUpiWalletMethod)
+            : FALLBACK_PAYMENT_LABELS.UPI_SCAN_PAY
+          : selectedCardWalletMethod
+            ? walletMethodLabel(selectedCardWalletMethod)
+            : FALLBACK_PAYMENT_LABELS[paymentMethod];
+  const cardSurchargeNote =
+    paymentMethod === 'VISA_5496' || paymentMethod === 'MASTERCARD_6802'
+      ? 'Card payments include a 2.5% processing surcharge'
+      : null;
   const cheapestTotal = useMemo(() => {
     if (quotes.length === 0) {
       return undefined;
@@ -425,13 +443,23 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
     }),
     [draftDrop?.lat, draftDrop?.lng, draftPickup?.lat, draftPickup?.lng, hasRoute]
   );
-  const virtualTruckMarkers = useMemo(
-    () =>
-      buildVirtualTruckMarkers({
-        lat: draftPickup?.lat ?? region.latitude,
-        lng: draftPickup?.lng ?? region.longitude
-      }),
+  const markerAnchorCandidate = useMemo(
+    () => ({
+      lat: draftPickup?.lat ?? region.latitude,
+      lng: draftPickup?.lng ?? region.longitude
+    }),
     [draftPickup?.lat, draftPickup?.lng, region.latitude, region.longitude]
+  );
+
+  useEffect(() => {
+    if (shouldRecenterSimulatedVehicles(virtualMarkerAnchor, markerAnchorCandidate)) {
+      setVirtualMarkerAnchor(markerAnchorCandidate);
+    }
+  }, [markerAnchorCandidate, virtualMarkerAnchor]);
+
+  const virtualTruckMarkers = useMemo(
+    () => buildSimulatedNearbyVehicles(virtualMarkerAnchor, 3),
+    [virtualMarkerAnchor]
   );
 
   const getOngoingOrderCount = async () => {
@@ -656,16 +684,21 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
               <Marker coordinate={{ latitude: draftPickup.lat, longitude: draftPickup.lng }} title="Pickup" />
             ) : null}
             {draftDrop ? (
-              <Marker coordinate={{ latitude: draftDrop.lat, longitude: draftDrop.lng }} title="Drop" pinColor="#F97316" />
+              <Marker coordinate={{ latitude: draftDrop.lat, longitude: draftDrop.lng }} title="Drop" pinColor="#2563EB" />
             ) : null}
             {virtualTruckMarkers.map((truck) => (
               <Marker
                 key={truck.id}
                 coordinate={{ latitude: truck.latitude, longitude: truck.longitude }}
-                title="Nearby QARGO truck"
-                description={`${truck.distanceKm.toFixed(1)} km away`}
-                pinColor="#0EA5E9"
-              />
+                title="Nearby QARGO ride"
+                description={`${truck.etaMinutes} min • ${truck.distanceKm.toFixed(1)} km`}
+                anchor={{ x: 0.5, y: 0.5 }}
+              >
+                <View style={styles.nearbyMarker}>
+                  <Text style={styles.nearbyMarkerEmoji}>{truck.symbol}</Text>
+                  <Text style={styles.nearbyMarkerEta}>{truck.etaMinutes}m</Text>
+                </View>
+              </Marker>
             ))}
             {draftPickup && draftDrop ? (
               <Polyline
@@ -677,11 +710,15 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
                         { latitude: draftDrop.lat, longitude: draftDrop.lng }
                       ]
                 }
-                strokeColor="#0F766E"
+                strokeColor="#1D4ED8"
                 strokeWidth={4}
               />
             ) : null}
           </MapView>
+
+          <View style={styles.nearbyBadge}>
+            <Text style={styles.nearbyBadgeText}>{virtualTruckMarkers.length} rides available nearby</Text>
+          </View>
 
           <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
             <Text style={styles.backButtonText}>{'<'}</Text>
@@ -881,22 +918,22 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
           </ScrollView>
 
           <Pressable style={styles.paymentRow} onPress={() => navigation.navigate('CustomerPayment')}>
-            <View style={styles.paymentLeft}>
-              <View style={styles.cardChip}>
-                <Text style={styles.cardChipText}>PAY</Text>
+              <View style={styles.paymentLeft}>
+                <View style={styles.cardChip}>
+                  <Text style={styles.cardChipText}>PAY</Text>
+                </View>
+                <View>
+                  <Text style={styles.paymentLabel}>{selectedPaymentLabel}</Text>
+                  {cardSurchargeNote ? <Text style={styles.paymentSubLabel}>{cardSurchargeNote}</Text> : null}
+                </View>
               </View>
-              <View>
-                <Text style={styles.paymentLabel}>{PAYMENT_LABELS[paymentMethod]}</Text>
-                {cardSurchargeNote ? <Text style={styles.paymentSubLabel}>{cardSurchargeNote}</Text> : null}
-              </View>
-            </View>
             <Text style={styles.routeArrow}>{'>'}</Text>
           </Pressable>
 
           <View style={styles.ctaRow}>
             <Pressable style={styles.refreshButton} onPress={() => void refreshQuotes()} disabled={estimateLoading}>
               {estimateLoading ? (
-                <ActivityIndicator color="#0F766E" />
+                <ActivityIndicator color="#1D4ED8" />
               ) : (
                 <Text style={styles.smallButtonText}>Refresh</Text>
               )}
@@ -904,7 +941,7 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
 
             <Pressable style={styles.chooseButton} onPress={() => void submitBooking()} disabled={creating}>
               {creating ? (
-                <ActivityIndicator color="#ECFEFF" />
+                <ActivityIndicator color="#EFF6FF" />
               ) : (
                 <Text style={styles.chooseText}>{selectedMeta ? `Book ${selectedMeta.label}` : 'Book vehicle'}</Text>
               )}
@@ -919,11 +956,11 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#FFF8F1'
+    backgroundColor: '#EFF6FF'
   },
   container: {
     flex: 1,
-    backgroundColor: '#FFF8F1'
+    backgroundColor: '#EFF6FF'
   },
   mapBlock: {
     height: '32%',
@@ -931,6 +968,42 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1
+  },
+  nearbyBadge: {
+    position: 'absolute',
+    top: 18,
+    right: 16,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6
+  },
+  nearbyBadgeText: {
+    color: '#1D4ED8',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 11
+  },
+  nearbyMarker: {
+    minWidth: 44,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2
+  },
+  nearbyMarkerEmoji: {
+    fontSize: 14
+  },
+  nearbyMarkerEta: {
+    color: '#1D4ED8',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 10
   },
   backButton: {
     position: 'absolute',
@@ -989,14 +1062,14 @@ const styles = StyleSheet.create({
   },
   etaPill: {
     borderRadius: 8,
-    backgroundColor: '#ECFEFF',
+    backgroundColor: '#EFF6FF',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4
   },
   etaText: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 11
   },
@@ -1014,7 +1087,7 @@ const styles = StyleSheet.create({
     fontSize: 11
   },
   routeArrow: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 16
   },
@@ -1045,7 +1118,7 @@ const styles = StyleSheet.create({
   },
   detailsButton: {
     borderRadius: 999,
-    backgroundColor: '#FFEDD5',
+    backgroundColor: '#DBEAFE',
     paddingHorizontal: 10,
     paddingVertical: 6
   },
@@ -1064,9 +1137,9 @@ const styles = StyleSheet.create({
   filterChip: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#D1FAE5',
-    backgroundColor: '#F0FDFA',
-    color: '#0F766E',
+    borderColor: '#DBEAFE',
+    backgroundColor: '#F8FAFF',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 11,
     paddingHorizontal: 8,
@@ -1112,8 +1185,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6
   },
   scheduleChipActive: {
-    borderColor: '#0F766E',
-    backgroundColor: '#CCFBF1'
+    borderColor: '#1D4ED8',
+    backgroundColor: '#DBEAFE'
   },
   scheduleChipText: {
     color: '#334155',
@@ -1121,7 +1194,7 @@ const styles = StyleSheet.create({
     fontSize: 11
   },
   scheduleChipTextActive: {
-    color: '#0F766E'
+    color: '#1D4ED8'
   },
   customScheduleInputs: {
     marginTop: 10,
@@ -1166,9 +1239,9 @@ const styles = StyleSheet.create({
     gap: 10
   },
   tripCardActive: {
-    borderColor: '#0F766E',
-    backgroundColor: '#ECFDF5',
-    shadowColor: '#0F766E',
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+    shadowColor: '#1D4ED8',
     shadowOpacity: 0.16,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 5 },
@@ -1181,10 +1254,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#CCFBF1'
+    backgroundColor: '#DBEAFE'
   },
   tripLeftIconText: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
@@ -1262,13 +1335,13 @@ const styles = StyleSheet.create({
     paddingVertical: 4
   },
   badgePrice: {
-    backgroundColor: '#DCFCE7'
+    backgroundColor: '#DBEAFE'
   },
   badgeSpeed: {
     backgroundColor: '#DBEAFE'
   },
   badgeRating: {
-    backgroundColor: '#FEF3C7'
+    backgroundColor: '#DBEAFE'
   },
   badgeDefault: {
     backgroundColor: '#E2E8F0'
@@ -1292,8 +1365,8 @@ const styles = StyleSheet.create({
     paddingVertical: 5
   },
   selectionPillActive: {
-    borderColor: '#0F766E',
-    backgroundColor: '#CCFBF1'
+    borderColor: '#1D4ED8',
+    backgroundColor: '#DBEAFE'
   },
   selectionPillText: {
     color: '#64748B',
@@ -1301,7 +1374,7 @@ const styles = StyleSheet.create({
     fontSize: 10
   },
   selectionPillTextActive: {
-    color: '#0F766E'
+    color: '#1D4ED8'
   },
   emptyState: {
     borderRadius: 12,
@@ -1339,13 +1412,13 @@ const styles = StyleSheet.create({
     gap: 8
   },
   cardChip: {
-    backgroundColor: '#0F766E',
+    backgroundColor: '#1D4ED8',
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 4
   },
   cardChipText: {
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     fontFamily: 'Manrope_700Bold',
     fontSize: 10
   },
@@ -1356,7 +1429,7 @@ const styles = StyleSheet.create({
   },
   paymentSubLabel: {
     marginTop: 1,
-    color: '#B45309',
+    color: '#1E40AF',
     fontFamily: 'Manrope_500Medium',
     fontSize: 11
   },
@@ -1378,18 +1451,18 @@ const styles = StyleSheet.create({
   chooseButton: {
     flex: 1,
     borderRadius: 12,
-    backgroundColor: '#0F766E',
+    backgroundColor: '#1D4ED8',
     alignItems: 'center',
     justifyContent: 'center',
     height: 48
   },
   chooseText: {
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     fontFamily: 'Sora_700Bold',
     fontSize: 16
   },
   smallButtonText: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   }

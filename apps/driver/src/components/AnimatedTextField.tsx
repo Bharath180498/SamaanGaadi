@@ -84,7 +84,7 @@ const styles = StyleSheet.create({
   inputShell: {
     borderWidth: 1,
     borderRadius: radius.sm,
-    backgroundColor: '#FFF7ED',
+    backgroundColor: '#F8FAFF',
     shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 8 },
     shadowRadius: 16,

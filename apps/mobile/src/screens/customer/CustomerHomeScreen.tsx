@@ -69,7 +69,7 @@ const DEFAULT_HOME_PROMOS: HomePromoCard[] = [
     title: 'Get 15% off on your first three rides',
     subtitle: 'Apply automatically after route setup.',
     cta: 'Start now',
-    colors: ['#1D4ED8', '#0F766E']
+    colors: ['#1D4ED8', '#1D4ED8']
   },
   {
     id: 'promo-bangalore-rush',
@@ -830,7 +830,7 @@ const styles = StyleSheet.create({
   },
   recentDropAction: {
     fontFamily: 'Manrope_700Bold',
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontSize: 12
   }
 });

@@ -17,12 +17,14 @@ import api, { SUPPORT_PHONE, maskPhone } from '../../services/api';
 import { useDriverSessionStore } from '../../store/useDriverSessionStore';
 import { useDriverAppStore } from '../../store/useDriverAppStore';
 import { colors, radius, spacing, typography } from '../../theme';
+import { useDriverI18n } from '../../i18n/useDriverI18n';
 
 type TicketStatus = 'OPEN' | 'IN_PROGRESS' | 'WAITING_FOR_USER' | 'RESOLVED';
 type SenderType = 'USER' | 'ADMIN' | 'SYSTEM';
 const RESOLUTION_TARGET_HOURS = 6;
-const CALL_ESCALATION_HOURS = 24;
+const CALL_ESCALATION_HOURS = 6;
 const CALL_ESCALATION_MS = CALL_ESCALATION_HOURS * 60 * 60 * 1000;
+const ESCALATION_LONG_PRESS_MS = 1800;
 
 interface PickedImage {
   uri: string;
@@ -93,7 +95,7 @@ async function pickSupportImageFromLibrary(): Promise<PickedImage | null> {
 
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      throw new Error('Allow photo access to upload support images.');
+      throw new Error('PERMISSION_DENIED');
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -108,7 +110,7 @@ async function pickSupportImageFromLibrary(): Promise<PickedImage | null> {
 
     return result.assets[0];
   } catch {
-    throw new Error('Image picker unavailable. Install dependency: npx expo install expo-image-picker');
+    throw new Error('IMAGE_PICKER_UNAVAILABLE');
   }
 }
 
@@ -259,19 +261,29 @@ function normalizeTicketDetail(input: unknown): SupportTicketDetail | null {
   };
 }
 
-function getStatusLabel(status: TicketStatus) {
+function getStatusLabel(status: TicketStatus, t: (key: string, params?: Record<string, string | number>) => string) {
   switch (status) {
     case 'OPEN':
-      return 'Pending';
+      return t('support.status.pending');
     case 'IN_PROGRESS':
-      return 'In Progress';
+      return t('support.status.inProgress');
     case 'WAITING_FOR_USER':
-      return 'Waiting on You';
+      return t('support.status.waiting');
     case 'RESOLVED':
-      return 'Resolved';
+      return t('support.status.resolved');
     default:
       return status;
   }
+}
+
+function getSenderTypeLabel(senderType: SenderType, t: (key: string, params?: Record<string, string | number>) => string) {
+  if (senderType === 'ADMIN') {
+    return t('support.sender.admin');
+  }
+  if (senderType === 'SYSTEM') {
+    return t('support.sender.system');
+  }
+  return t('support.sender.user');
 }
 
 function buildDraftFileName(index: number) {
@@ -279,6 +291,7 @@ function buildDraftFileName(index: number) {
 }
 
 export function SupportScreen() {
+  const { t } = useDriverI18n();
   const user = useDriverSessionStore((state) => state.user);
   const currentJob = useDriverAppStore((state) => state.currentJob);
 
@@ -340,7 +353,7 @@ export function SupportScreen() {
           setViewMode('inbox');
         }
       } catch (loadError: unknown) {
-        Alert.alert('Support', errorMessage(loadError, 'Could not load support tickets.'));
+        Alert.alert(t('support.alert.genericTitle'), errorMessage(loadError, t('support.alert.loadTickets')));
       } finally {
         setLoadingList(false);
         setRefreshingList(false);
@@ -368,7 +381,7 @@ export function SupportScreen() {
 
         const detail = normalizeTicketDetail(response.data);
         if (!detail) {
-          throw new Error('Could not parse ticket details');
+          throw new Error(t('support.alert.openTicket'));
         }
 
         setSelectedTicketId(ticketId);
@@ -376,7 +389,7 @@ export function SupportScreen() {
         setViewMode('detail');
       } catch (ticketError: unknown) {
         if (!silent) {
-          Alert.alert('Support', errorMessage(ticketError, 'Could not open this ticket.'));
+          Alert.alert(t('support.alert.genericTitle'), errorMessage(ticketError, t('support.alert.openTicket')));
         }
       } finally {
         setLoadingDetail(false);
@@ -405,39 +418,45 @@ export function SupportScreen() {
     try {
       const canOpen = await Linking.canOpenURL(url);
       if (!canOpen) {
-        Alert.alert('Support', 'Unable to launch phone dialer.');
+        Alert.alert(t('support.alert.genericTitle'), t('support.alert.cannotDial'));
         return;
       }
       await Linking.openURL(url);
     } catch {
-      Alert.alert('Support', 'Unable to place call right now.');
+      Alert.alert(t('support.alert.genericTitle'), t('support.alert.callFail'));
     }
   };
 
   const callSupport = async () => {
     if (tickets.length === 0) {
       Alert.alert(
-        'Message support first',
-        `Please create a ticket first. We aim to resolve within ${RESOLUTION_TARGET_HOURS} hours. If unresolved in ${CALL_ESCALATION_HOURS} hours, call support.`
+        t('support.alert.messageFirstTitle'),
+        t('support.alert.messageFirstBody', {
+          resolveHours: RESOLUTION_TARGET_HOURS,
+          callHours: CALL_ESCALATION_HOURS
+        })
       );
       return;
     }
 
     if (!escalationEligible) {
       Alert.alert(
-        'Please wait for first response',
-        `Support is working on your ticket. We aim to resolve within ${RESOLUTION_TARGET_HOURS} hours. If no resolution within ${CALL_ESCALATION_HOURS} hours, call support to escalate.`
+        t('support.alert.waitResponseTitle'),
+        t('support.alert.waitResponseBody', {
+          resolveHours: RESOLUTION_TARGET_HOURS,
+          callHours: CALL_ESCALATION_HOURS
+        })
       );
       return;
     }
 
     Alert.alert(
-      'Escalate via call?',
-      `This issue has crossed ${CALL_ESCALATION_HOURS} hours without resolution. You can call support now.`,
+      t('support.alert.escalateTitle'),
+      t('support.alert.escalateBody', { hours: CALL_ESCALATION_HOURS }),
       [
-        { text: 'Not now', style: 'cancel' },
+        { text: t('support.alert.notNow'), style: 'cancel' },
         {
-          text: 'Call support',
+          text: t('support.alert.callSupport'),
           onPress: () => {
             void placeSupportCall();
           }
@@ -474,7 +493,7 @@ export function SupportScreen() {
         await openTicket(createdTicketId);
       }
     } catch (createError: unknown) {
-      Alert.alert('Support', errorMessage(createError, 'Could not create support ticket.'));
+      Alert.alert(t('support.alert.genericTitle'), errorMessage(createError, t('support.alert.createTicket')));
     } finally {
       setBusy(false);
     }
@@ -482,12 +501,15 @@ export function SupportScreen() {
 
   const addReplyAttachment = async () => {
     if (!selectedTicketId) {
-      Alert.alert('Support', 'Open a ticket first to attach images.');
+      Alert.alert(t('support.alert.genericTitle'), t('support.alert.openTicketFirst'));
       return;
     }
 
     if (replyAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
-      Alert.alert('Attachment limit', `You can attach up to ${MAX_ATTACHMENTS_PER_MESSAGE} images per message.`);
+      Alert.alert(
+        t('support.alert.attachmentLimitTitle'),
+        t('support.alert.attachmentLimitBody', { count: MAX_ATTACHMENTS_PER_MESSAGE })
+      );
       return;
     }
 
@@ -495,7 +517,12 @@ export function SupportScreen() {
     try {
       picked = await pickSupportImageFromLibrary();
     } catch (imageError: unknown) {
-      Alert.alert('Attachment setup required', String((imageError as Error)?.message ?? 'Unable to open image picker.'));
+      const code = String((imageError as Error)?.message ?? '');
+      if (code === 'PERMISSION_DENIED') {
+        Alert.alert(t('support.alert.attachmentSetupTitle'), t('support.alert.imagePickerPermission'));
+      } else {
+        Alert.alert(t('support.alert.attachmentSetupTitle'), t('support.alert.imagePickerMissing'));
+      }
       return;
     }
 
@@ -560,7 +587,7 @@ export function SupportScreen() {
         });
 
         if (!putResponse.ok) {
-          throw new Error('Could not upload support image');
+          throw new Error(t('support.alert.uploadImageFail'));
         }
       }
 
@@ -594,7 +621,7 @@ export function SupportScreen() {
       setReplyAttachments([]);
       await Promise.all([loadTickets(false), openTicket(selectedTicketId, false)]);
     } catch (replyError: unknown) {
-      Alert.alert('Support', errorMessage(replyError, 'Could not send message.'));
+      Alert.alert(t('support.alert.genericTitle'), errorMessage(replyError, t('support.alert.sendReply')));
     } finally {
       setBusy(false);
     }
@@ -616,28 +643,30 @@ export function SupportScreen() {
         }
       >
         <View style={styles.card}>
-          <Text style={styles.title}>Support Center</Text>
-          <Text style={styles.info}>Message first. We aim to resolve tickets within {RESOLUTION_TARGET_HOURS} hours.</Text>
-          <Text style={styles.info}>
-            If unresolved after {CALL_ESCALATION_HOURS} hours, call support to escalate.
-          </Text>
-          <Text style={styles.meta}>Support line: {maskedSupportPhone}</Text>
+          <Text style={styles.title}>{t('support.title')}</Text>
+          <Text style={styles.info}>{t('support.info.messageFirst', { hours: RESOLUTION_TARGET_HOURS })}</Text>
+          <Text style={styles.info}>{t('support.info.callAfter', { hours: CALL_ESCALATION_HOURS })}</Text>
+          {escalationEligible ? <Text style={styles.meta}>{t('support.info.supportLine', { phone: maskedSupportPhone })}</Text> : null}
           <Text style={[styles.meta, escalationEligible ? styles.metaReady : undefined]}>
-            {escalationEligible ? 'Call escalation is available now.' : 'Call unlocks after 24h unresolved.'}
+            {escalationEligible ? t('support.info.callEnabled') : t('support.info.callLocked')}
           </Text>
-          <Pressable style={styles.callButton} onPress={() => void callSupport()}>
-            <Text style={styles.callButtonText}>Escalate by call</Text>
+          <Pressable
+            style={styles.hiddenEscalationTrigger}
+            onLongPress={() => void callSupport()}
+            delayLongPress={ESCALATION_LONG_PRESS_MS}
+          >
+            <Text style={styles.callButtonText}>{t('support.button.callEscalate')}</Text>
           </Pressable>
         </View>
 
         {viewMode === 'inbox' ? (
           <>
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Create Ticket</Text>
+              <Text style={styles.cardTitle}>{t('support.createTitle')}</Text>
               <TextInput
                 value={subject}
                 onChangeText={setSubject}
-                placeholder="Subject"
+                placeholder={t('support.subjectPlaceholder')}
                 placeholderTextColor="#94A3B8"
                 style={styles.input}
                 maxLength={140}
@@ -645,34 +674,37 @@ export function SupportScreen() {
               <TextInput
                 value={description}
                 onChangeText={setDescription}
-                placeholder="Describe issue"
+                placeholder={t('support.descriptionPlaceholder')}
                 placeholderTextColor="#94A3B8"
                 style={[styles.input, styles.textArea]}
                 multiline
                 maxLength={2000}
               />
               <Text style={styles.meta}>
-                Context: Order {currentJob?.orderId ?? '--'} • Trip {currentJob?.id ?? '--'}
+                {t('support.context', {
+                  orderId: currentJob?.orderId ?? '--',
+                  tripId: currentJob?.id ?? '--'
+                })}
               </Text>
               <Pressable
                 style={[styles.primaryButton, busy && styles.disabledButton]}
                 onPress={() => void createTicket()}
                 disabled={busy}
               >
-                <Text style={styles.primaryButtonText}>{busy ? 'Submitting...' : 'Submit Ticket'}</Text>
+                <Text style={styles.primaryButtonText}>{busy ? t('support.submitting') : t('support.submitTicket')}</Text>
               </Pressable>
             </View>
 
             <View style={styles.card}>
               <View style={styles.ticketHeaderRow}>
-                <Text style={styles.cardTitle}>My Tickets</Text>
-                <Text style={styles.meta}>{tickets.length} total</Text>
+                <Text style={styles.cardTitle}>{t('support.myTickets')}</Text>
+                <Text style={styles.meta}>{t('support.total', { count: tickets.length })}</Text>
               </View>
 
               {loadingList ? <ActivityIndicator color={colors.secondary} style={{ marginTop: 10 }} /> : null}
 
               {tickets.map((ticket) => {
-                const statusLabel = getStatusLabel(ticket.status);
+                const statusLabel = getStatusLabel(ticket.status, t);
                 return (
                   <Pressable key={ticket.id} onPress={() => void openTicket(ticket.id)} style={styles.ticketRow}>
                     <View style={styles.ticketTopRow}>
@@ -705,14 +737,14 @@ export function SupportScreen() {
                         </Text>
                       </View>
                     </View>
-                    <Text style={styles.ticketMeta}>Updated {formatDate(ticket.updatedAt)}</Text>
-                    <Text style={styles.ticketMeta}>Messages: {ticket.messageCount}</Text>
+                    <Text style={styles.ticketMeta}>{t('support.updatedAt', { value: formatDate(ticket.updatedAt) })}</Text>
+                    <Text style={styles.ticketMeta}>{t('support.messagesCount', { count: ticket.messageCount })}</Text>
                   </Pressable>
                 );
               })}
 
               {!loadingList && tickets.length === 0 ? (
-                <Text style={styles.info}>No tickets yet. Raise your first issue when needed.</Text>
+                <Text style={styles.info}>{t('support.noTickets')}</Text>
               ) : null}
             </View>
           </>
@@ -726,7 +758,7 @@ export function SupportScreen() {
                 setReplyAttachments([]);
               }}
             >
-              <Text style={styles.backButtonText}>← Back to Ticket List</Text>
+              <Text style={styles.backButtonText}>{`← ${t('support.backToList')}`}</Text>
             </Pressable>
 
             {loadingDetail || !selectedTicket ? (
@@ -759,23 +791,28 @@ export function SupportScreen() {
                               : styles.statusOpenText
                       ]}
                     >
-                      {getStatusLabel(selectedTicket.status)}
+                      {getStatusLabel(selectedTicket.status, t)}
                     </Text>
                   </View>
                 </View>
 
-                <Text style={styles.meta}>Opened: {formatDate(selectedTicket.createdAt)}</Text>
-                <Text style={styles.meta}>Updated: {formatDate(selectedTicket.updatedAt)}</Text>
-                <Text style={styles.meta}>Order: {selectedTicket.orderId ?? '--'} • Trip: {selectedTicket.tripId ?? '--'}</Text>
+                <Text style={styles.meta}>{t('support.openedAt', { value: formatDate(selectedTicket.createdAt) })}</Text>
+                <Text style={styles.meta}>{t('support.updatedAtLabel', { value: formatDate(selectedTicket.updatedAt) })}</Text>
+                <Text style={styles.meta}>
+                  {t('support.orderTrip', {
+                    orderId: selectedTicket.orderId ?? '--',
+                    tripId: selectedTicket.tripId ?? '--'
+                  })}
+                </Text>
 
                 <View style={styles.descriptionBox}>
-                  <Text style={styles.descriptionTitle}>Issue Summary</Text>
+                  <Text style={styles.descriptionTitle}>{t('support.issueSummary')}</Text>
                   <Text style={styles.descriptionText}>{selectedTicket.description || '--'}</Text>
                 </View>
 
                 <View style={styles.threadWrap}>
                   {selectedTicket.messages.length === 0 ? (
-                    <Text style={styles.meta}>No messages yet.</Text>
+                    <Text style={styles.meta}>{t('support.noMessages')}</Text>
                   ) : (
                     selectedTicket.messages.map((message) => {
                       const userMessage = message.senderType === 'USER';
@@ -793,7 +830,7 @@ export function SupportScreen() {
                           ]}
                         >
                           <Text style={styles.messageMeta}>
-                            {message.senderType}
+                            {getSenderTypeLabel(message.senderType, t)}
                             {message.senderUser?.name ? ` • ${message.senderUser.name}` : ''}
                           </Text>
                           <Text style={styles.messageText}>{message.message}</Text>
@@ -804,7 +841,7 @@ export function SupportScreen() {
                                 <View key={attachment.id} style={styles.messageAttachmentCard}>
                                   <Image source={{ uri: attachment.fileUrl }} style={styles.messageAttachmentImage} />
                                   <Text style={styles.messageAttachmentLabel} numberOfLines={1}>
-                                    {attachment.fileName || 'Image'}
+                                    {attachment.fileName || t('support.attachmentImage')}
                                   </Text>
                                 </View>
                               ))}
@@ -821,13 +858,13 @@ export function SupportScreen() {
                 <TextInput
                   value={reply}
                   onChangeText={setReply}
-                  placeholder={selectedTicket.status === 'RESOLVED' ? 'Send message to reopen this ticket' : 'Add follow-up message'}
+                  placeholder={selectedTicket.status === 'RESOLVED' ? t('support.replyPlaceholderResolved') : t('support.replyPlaceholder')}
                   placeholderTextColor="#94A3B8"
                   style={[styles.input, styles.textArea]}
                   multiline
                   maxLength={2000}
                 />
-                <Text style={styles.meta}>Type in any language. Our support team will review your message directly.</Text>
+                <Text style={styles.meta}>{t('support.replyHint')}</Text>
 
                 <View style={styles.composeActionRow}>
                   <Pressable
@@ -835,9 +872,14 @@ export function SupportScreen() {
                     onPress={() => void addReplyAttachment()}
                     disabled={busy}
                   >
-                    <Text style={styles.secondaryText}>Attach Image</Text>
+                    <Text style={styles.secondaryText}>{t('support.attachImage')}</Text>
                   </Pressable>
-                  <Text style={styles.meta}>{replyAttachments.length}/{MAX_ATTACHMENTS_PER_MESSAGE} attached</Text>
+                  <Text style={styles.meta}>
+                    {t('support.attachedCount', {
+                      count: replyAttachments.length,
+                      max: MAX_ATTACHMENTS_PER_MESSAGE
+                    })}
+                  </Text>
                 </View>
 
                 {replyAttachments.length > 0 ? (
@@ -849,7 +891,7 @@ export function SupportScreen() {
                           style={styles.draftAttachmentRemove}
                           onPress={() => removeReplyAttachment(attachment.localId)}
                         >
-                          <Text style={styles.draftAttachmentRemoveText}>Remove</Text>
+                          <Text style={styles.draftAttachmentRemoveText}>{t('common.remove')}</Text>
                         </Pressable>
                       </View>
                     ))}
@@ -861,7 +903,7 @@ export function SupportScreen() {
                   onPress={() => void sendReply()}
                   disabled={busy}
                 >
-                  <Text style={styles.primaryButtonText}>{busy ? 'Sending...' : 'Send Message'}</Text>
+                  <Text style={styles.primaryButtonText}>{busy ? t('support.sending') : t('support.sendMessage')}</Text>
                 </Pressable>
               </>
             )}
@@ -915,23 +957,22 @@ const styles = StyleSheet.create({
   metaReady: {
     color: colors.secondary
   },
-  callButton: {
+  hiddenEscalationTrigger: {
     marginTop: 6,
-    borderRadius: 999,
-    backgroundColor: '#0F172A',
-    paddingVertical: 10,
-    alignItems: 'center'
+    alignSelf: 'flex-start',
+    paddingVertical: 2,
+    paddingHorizontal: 4
   },
   callButtonText: {
-    fontFamily: typography.bodyBold,
-    color: '#F8FAFC',
-    fontSize: 14
+    fontFamily: typography.body,
+    color: '#94A3B8',
+    fontSize: 11
   },
   input: {
     borderWidth: 1,
-    borderColor: '#FDBA74',
+    borderColor: '#93C5FD',
     borderRadius: radius.md,
-    backgroundColor: '#FFF7ED',
+    backgroundColor: '#F8FAFF',
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
     fontFamily: typography.body,
@@ -1013,11 +1054,11 @@ const styles = StyleSheet.create({
     fontSize: 11
   },
   statusOpen: {
-    backgroundColor: '#FFF7ED',
-    borderColor: '#FDBA74'
+    backgroundColor: '#F8FAFF',
+    borderColor: '#93C5FD'
   },
   statusOpenText: {
-    color: '#C2410C'
+    color: '#1E3A8A'
   },
   statusInProgress: {
     backgroundColor: '#EEF2FF',
@@ -1027,18 +1068,18 @@ const styles = StyleSheet.create({
     color: '#3730A3'
   },
   statusWaiting: {
-    backgroundColor: '#ECFEFF',
+    backgroundColor: '#EFF6FF',
     borderColor: '#67E8F9'
   },
   statusWaitingText: {
-    color: '#0F766E'
+    color: '#1D4ED8'
   },
   statusResolved: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#86EFAC'
+    backgroundColor: '#EFF6FF',
+    borderColor: '#93C5FD'
   },
   statusResolvedText: {
-    color: '#166534'
+    color: '#1E40AF'
   },
   descriptionBox: {
     marginTop: spacing.xs,
@@ -1070,8 +1111,8 @@ const styles = StyleSheet.create({
     gap: 6
   },
   messageBubbleUser: {
-    borderColor: '#FED7AA',
-    backgroundColor: '#FFF7ED'
+    borderColor: '#BFDBFE',
+    backgroundColor: '#F8FAFF'
   },
   messageBubbleAdmin: {
     borderColor: '#BFDBFE',
@@ -1106,7 +1147,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     borderWidth: 1,
     borderColor: '#FCD34D',
-    backgroundColor: '#FFFBEB'
+    backgroundColor: '#EFF6FF'
   },
   messageAttachmentLabel: {
     fontFamily: typography.body,
@@ -1139,8 +1180,8 @@ const styles = StyleSheet.create({
     height: 112,
     borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: '#FDBA74',
-    backgroundColor: '#FFF7ED'
+    borderColor: '#93C5FD',
+    backgroundColor: '#F8FAFF'
   },
   draftAttachmentRemove: {
     borderWidth: 1,
@@ -1161,7 +1202,7 @@ const styles = StyleSheet.create({
     borderColor: colors.secondary,
     alignItems: 'center',
     paddingVertical: spacing.sm,
-    backgroundColor: '#ECFDF5'
+    backgroundColor: '#EFF6FF'
   },
   secondaryText: {
     fontFamily: typography.bodyBold,

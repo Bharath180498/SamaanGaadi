@@ -22,6 +22,10 @@ import type { RootStackParamList } from '../../types/navigation';
 import { type RoutePoint, useCustomerStore } from '../../store/useCustomerStore';
 import MapView, { type MapViewRef, Marker, type Region } from '../../components/maps';
 import appConfig from '../../../app.json';
+import {
+  buildSimulatedNearbyVehicles,
+  shouldRecenterSimulatedVehicles
+} from '../../utils/nearbyVehicleSimulation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CustomerPickupConfirm'>;
 
@@ -36,6 +40,14 @@ interface AddressSuggestion {
   provider?: 'google' | 'nominatim';
   lat?: number;
   lng?: number;
+}
+
+interface NearbyRideMarker {
+  id: string;
+  latitude: number;
+  longitude: number;
+  etaMinutes: number;
+  symbol: string;
 }
 
 const FALLBACK_REGION: Region = {
@@ -537,6 +549,10 @@ export function CustomerPickupConfirmScreen({ navigation }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [keyboardRaised, setKeyboardRaised] = useState(false);
   const [pickupAutoPinnedFromLocation, setPickupAutoPinnedFromLocation] = useState(false);
+  const [nearbyMarkerAnchor, setNearbyMarkerAnchor] = useState({
+    lat: draftPickup?.lat ?? FALLBACK_REGION.latitude,
+    lng: draftPickup?.lng ?? FALLBACK_REGION.longitude
+  });
 
   const activeQuery = step === 'PICKUP' ? pickupQuery : dropQuery;
   const activeSearchSelected = step === 'PICKUP' ? pickupSearchSelected : dropSearchSelected;
@@ -555,6 +571,31 @@ export function CustomerPickupConfirmScreen({ navigation }: Props) {
     outputRange: [0, -260],
     extrapolate: 'clamp'
   });
+  const nearbyMarkerAnchorCandidate = useMemo(
+    () => ({
+      lat: pickupPoint?.lat ?? mapRegion.latitude,
+      lng: pickupPoint?.lng ?? mapRegion.longitude
+    }),
+    [mapRegion.latitude, mapRegion.longitude, pickupPoint?.lat, pickupPoint?.lng]
+  );
+
+  useEffect(() => {
+    if (shouldRecenterSimulatedVehicles(nearbyMarkerAnchor, nearbyMarkerAnchorCandidate)) {
+      setNearbyMarkerAnchor(nearbyMarkerAnchorCandidate);
+    }
+  }, [nearbyMarkerAnchor, nearbyMarkerAnchorCandidate]);
+
+  const nearbyRideMarkers = useMemo(
+    () =>
+      buildSimulatedNearbyVehicles(nearbyMarkerAnchor, 4).map((vehicle) => ({
+        id: vehicle.id,
+        latitude: vehicle.latitude,
+        longitude: vehicle.longitude,
+        etaMinutes: vehicle.etaMinutes,
+        symbol: vehicle.symbol
+      })),
+    [nearbyMarkerAnchor]
+  );
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -1070,15 +1111,33 @@ export function CustomerPickupConfirmScreen({ navigation }: Props) {
           initialRegion={mapRegion}
           onRegionChangeComplete={onRegionChangeComplete}
         >
+          {nearbyRideMarkers.map((ride) => (
+            <Marker
+              key={ride.id}
+              coordinate={{ latitude: ride.latitude, longitude: ride.longitude }}
+              title="Nearby QARGO ride"
+              description={`${ride.etaMinutes} min away`}
+              anchor={{ x: 0.5, y: 0.5 }}
+            >
+              <View style={styles.nearbyMarker}>
+                <Text style={styles.nearbyMarkerEmoji}>{ride.symbol}</Text>
+                <Text style={styles.nearbyMarkerEta}>{ride.etaMinutes}m</Text>
+              </View>
+            </Marker>
+          ))}
           {pickupPoint ? (
             <Marker
               coordinate={{ latitude: pickupPoint.lat, longitude: pickupPoint.lng }}
-              pinColor={step === 'PICKUP' ? '#0F766E' : '#0EA5E9'}
+              pinColor={step === 'PICKUP' ? '#1D4ED8' : '#0EA5E9'}
             />
           ) : null}
 
-          {dropPoint ? <Marker coordinate={{ latitude: dropPoint.lat, longitude: dropPoint.lng }} pinColor="#F97316" /> : null}
+          {dropPoint ? <Marker coordinate={{ latitude: dropPoint.lat, longitude: dropPoint.lng }} pinColor="#2563EB" /> : null}
         </MapView>
+
+        <View style={styles.nearbyBadge}>
+          <Text style={styles.nearbyBadgeText}>{nearbyRideMarkers.length} rides available nearby</Text>
+        </View>
 
         <View style={styles.topControls}>
           <Pressable style={styles.circleButton} onPress={onBack}>
@@ -1141,7 +1200,7 @@ export function CustomerPickupConfirmScreen({ navigation }: Props) {
               style={styles.searchInput}
             />
 
-            {searchLoading ? <ActivityIndicator color="#0F766E" style={styles.searchLoading} /> : null}
+            {searchLoading ? <ActivityIndicator color="#1D4ED8" style={styles.searchLoading} /> : null}
             {searchMessage ? <Text style={styles.searchMessage}>{searchMessage}</Text> : null}
             {showManualPinFallback ? (
               <Pressable
@@ -1208,14 +1267,51 @@ export function CustomerPickupConfirmScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#FFF8F1'
+    backgroundColor: '#EFF6FF'
   },
   container: {
     flex: 1,
-    backgroundColor: '#FFF8F1'
+    backgroundColor: '#EFF6FF'
   },
   map: {
     ...StyleSheet.absoluteFillObject
+  },
+  nearbyBadge: {
+    position: 'absolute',
+    top: 24,
+    right: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    zIndex: 21
+  },
+  nearbyBadgeText: {
+    color: '#1D4ED8',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 11
+  },
+  nearbyMarker: {
+    minWidth: 44,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2
+  },
+  nearbyMarkerEmoji: {
+    fontSize: 14
+  },
+  nearbyMarkerEta: {
+    color: '#1D4ED8',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 10
   },
   topControls: {
     position: 'absolute',
@@ -1261,7 +1357,7 @@ const styles = StyleSheet.create({
     borderRadius: 999
   },
   stepToggleItemActive: {
-    backgroundColor: '#0F766E'
+    backgroundColor: '#1D4ED8'
   },
   stepToggleText: {
     color: '#334155',
@@ -1269,7 +1365,7 @@ const styles = StyleSheet.create({
     fontSize: 12
   },
   stepToggleTextActive: {
-    color: '#ECFEFF'
+    color: '#EFF6FF'
   },
   centerPin: {
     position: 'absolute',
@@ -1294,10 +1390,10 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#0F766E'
+    backgroundColor: '#1D4ED8'
   },
   centerPinDotDrop: {
-    backgroundColor: '#F97316'
+    backgroundColor: '#2563EB'
   },
   sheet: {
     width: '100%',
@@ -1396,13 +1492,13 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#0F766E',
-    backgroundColor: '#ECFEFF',
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 10,
     paddingVertical: 6
   },
   manualPinButtonText: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
@@ -1460,19 +1556,19 @@ const styles = StyleSheet.create({
   },
   badgePill: {
     borderRadius: 999,
-    backgroundColor: '#CCFBF1',
+    backgroundColor: '#DBEAFE',
     paddingHorizontal: 10,
     paddingVertical: 6
   },
   badgePillText: {
-    color: '#115E59',
+    color: '#1E3A8A',
     fontFamily: 'Manrope_700Bold',
     fontSize: 11
   },
   confirmButton: {
     marginTop: 6,
     borderRadius: 14,
-    backgroundColor: '#0F766E',
+    backgroundColor: '#1D4ED8',
     paddingVertical: 12,
     alignItems: 'center'
   },
@@ -1480,7 +1576,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#64748B'
   },
   confirmText: {
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     fontFamily: 'Sora_700Bold',
     fontSize: 16
   }

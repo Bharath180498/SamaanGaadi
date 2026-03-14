@@ -5,10 +5,13 @@ import { OnboardingVehicleScreen } from '../screens/onboarding/OnboardingVehicle
 import { OnboardingBankScreen } from '../screens/onboarding/OnboardingBankScreen';
 import { OnboardingDocumentsScreen } from '../screens/onboarding/OnboardingDocumentsScreen';
 import { OnboardingStatusScreen } from '../screens/onboarding/OnboardingStatusScreen';
+import { useDriverI18n } from '../i18n/useDriverI18n';
 
 const Stack = createNativeStackNavigator<OnboardingStackParamList>();
 
 export function OnboardingNavigator() {
+  const { t } = useDriverI18n();
+
   return (
     <Stack.Navigator
       screenOptions={{
@@ -20,29 +23,29 @@ export function OnboardingNavigator() {
         name="OnboardingProfile"
         component={OnboardingProfileScreen}
         options={{
-          title: 'Profile',
+          title: t('nav.onboarding.profile'),
           headerBackVisible: false
         }}
       />
       <Stack.Screen
         name="OnboardingVehicle"
         component={OnboardingVehicleScreen}
-        options={{ title: 'Vehicle' }}
+        options={{ title: t('nav.onboarding.vehicle') }}
       />
       <Stack.Screen
         name="OnboardingBank"
         component={OnboardingBankScreen}
-        options={{ title: 'Payout Details' }}
+        options={{ title: t('nav.onboarding.payout') }}
       />
       <Stack.Screen
         name="OnboardingDocuments"
         component={OnboardingDocumentsScreen}
-        options={{ title: 'Documents' }}
+        options={{ title: t('nav.onboarding.documents') }}
       />
       <Stack.Screen
         name="OnboardingStatus"
         component={OnboardingStatusScreen}
-        options={{ title: 'Verification Status' }}
+        options={{ title: t('nav.onboarding.status') }}
       />
     </Stack.Navigator>
   );

@@ -2,6 +2,7 @@ import { Body, Controller, Headers, Post } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ConfirmPaymentDto } from './dto/confirm-payment.dto';
+import { DriverConfirmPaymentDto } from './dto/driver-confirm-payment.dto';
 
 @Controller('payments')
 export class PaymentsController {
@@ -15,6 +16,11 @@ export class PaymentsController {
   @Post('confirm')
   confirm(@Body() payload: ConfirmPaymentDto) {
     return this.paymentsService.confirm(payload);
+  }
+
+  @Post('driver-confirm')
+  driverConfirm(@Body() payload: DriverConfirmPaymentDto) {
+    return this.paymentsService.driverConfirmDirectUpiPayment(payload);
   }
 
   @Post('webhooks/razorpay')

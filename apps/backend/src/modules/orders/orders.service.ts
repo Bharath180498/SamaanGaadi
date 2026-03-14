@@ -7,6 +7,7 @@ import {
   TripStatus,
   VehicleType
 } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { DispatchService } from '../dispatch/dispatch.service';
@@ -19,6 +20,7 @@ import { DriversService } from '../drivers/drivers.service';
 import { RedisService } from '../../common/redis/redis.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { buildS3DownloadUrl } from '../../common/utils/s3-upload.util';
 
 const MAX_INTRA_CITY_DISTANCE_KM = 35;
 
@@ -26,6 +28,7 @@ const MAX_INTRA_CITY_DISTANCE_KM = 35;
 export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
     private readonly dispatchService: DispatchService,
     private readonly pricingService: PricingService,
     private readonly ewayBillService: EwayBillService,
@@ -59,6 +62,48 @@ export class OrdersService {
         'City-to-city deliveries are coming soon. Please choose pickup and drop within city limits.'
       );
     }
+  }
+
+  private async attachReadableDeliveryProofUrl<
+    T extends {
+      trip?: {
+        deliveryProof?: {
+          photoFileKey?: string | null;
+          photoUrl?: string | null;
+        } | null;
+      } | null;
+    }
+  >(order: T): Promise<T> {
+    const proof = order.trip?.deliveryProof;
+    if (!proof || typeof proof.photoFileKey !== 'string' || !proof.photoFileKey.trim()) {
+      return order;
+    }
+
+    const endpoint = (this.configService.get<string>('s3.endpoint') ?? '').trim();
+    const accessKeyId = (this.configService.get<string>('s3.accessKeyId') ?? '').trim();
+    const secretAccessKey = (this.configService.get<string>('s3.secretAccessKey') ?? '').trim();
+    const bucket = (this.configService.get<string>('s3.bucket') ?? '').trim();
+    const region = this.configService.get<string>('s3.region') ?? 'auto';
+
+    const signedReadUrl = await buildS3DownloadUrl(
+      {
+        endpoint,
+        region,
+        bucket,
+        accessKeyId,
+        secretAccessKey
+      },
+      {
+        fileKey: proof.photoFileKey,
+        expiresInSeconds: 3600
+      }
+    );
+
+    if (signedReadUrl) {
+      proof.photoUrl = signedReadUrl;
+    }
+
+    return order;
   }
 
   async estimate(payload: EstimateOrderDto) {
@@ -202,8 +247,8 @@ export class OrdersService {
     };
   }
 
-  list(query: OrdersQueryDto) {
-    return this.prisma.order.findMany({
+  async list(query: OrdersQueryDto) {
+    const orders = await this.prisma.order.findMany({
       where: {
         ...(query.customerId ? { customerId: query.customerId } : {}),
         ...(query.status ? { status: query.status } : {})
@@ -218,6 +263,7 @@ export class OrdersService {
               select: {
                 id: true,
                 receiverName: true,
+                photoFileKey: true,
                 photoUrl: true,
                 createdAt: true
               }
@@ -227,6 +273,8 @@ export class OrdersService {
         payment: true
       }
     });
+
+    return Promise.all(orders.map((order) => this.attachReadableDeliveryProofUrl(order)));
   }
 
   async findById(orderId: string) {
@@ -285,7 +333,7 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
 
-    return order;
+    return this.attachReadableDeliveryProofUrl(order);
   }
 
   async timeline(orderId: string) {

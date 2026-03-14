@@ -422,13 +422,13 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     color: colors.accent,
     fontFamily: typography.body,
-    backgroundColor: '#FFF7ED'
+    backgroundColor: '#F8FAFF'
   },
   block: {
     borderWidth: 1,
-    borderColor: '#F1D3A6',
+    borderColor: '#BFDBFE',
     borderRadius: radius.sm,
-    backgroundColor: '#FFFBF5',
+    backgroundColor: '#F8FAFF',
     padding: spacing.sm,
     gap: spacing.xs
   },
@@ -441,7 +441,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.secondary,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 10,
     paddingVertical: 5
   },
@@ -462,8 +462,8 @@ const styles = StyleSheet.create({
     height: SIGNATURE_HEIGHT,
     borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: '#B45309',
-    backgroundColor: '#FFFDF8',
+    borderColor: '#1E40AF',
+    backgroundColor: '#F8FAFF',
     overflow: 'hidden'
   },
   signatureSegment: {

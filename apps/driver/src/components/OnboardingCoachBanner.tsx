@@ -20,7 +20,7 @@ export function OnboardingCoachBanner({ step, total, tipKey }: OnboardingCoachBa
       <View style={styles.progressTrack}>
         <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
       </View>
-      <Text style={styles.stepText}>{`Step ${step}/${total}`}</Text>
+      <Text style={styles.stepText}>{t('onboarding.stepProgress', { step, total })}</Text>
     </View>
   );
 }
@@ -29,8 +29,8 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#FDBA74',
-    backgroundColor: '#FFF7ED',
+    borderColor: '#93C5FD',
+    backgroundColor: '#F8FAFF',
     padding: spacing.sm,
     gap: 6
   },
@@ -48,12 +48,12 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 8,
     borderRadius: 999,
-    backgroundColor: '#FED7AA',
+    backgroundColor: '#BFDBFE',
     overflow: 'hidden'
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#F97316'
+    backgroundColor: '#2563EB'
   },
   stepText: {
     fontFamily: typography.body,

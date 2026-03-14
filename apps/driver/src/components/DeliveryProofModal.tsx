@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -13,6 +13,7 @@ import {
   View
 } from 'react-native';
 import { colors, radius, spacing, typography } from '../theme';
+import { useDriverI18n } from '../i18n/useDriverI18n';
 
 interface SignaturePoint {
   x: number;
@@ -20,6 +21,13 @@ interface SignaturePoint {
 }
 
 type SignatureStroke = SignaturePoint[];
+
+interface SignatureCanvasBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface DeliveryProofSubmission {
   receiverName: string;
@@ -77,12 +85,71 @@ function normalizePoint(point: SignaturePoint, width: number, height: number) {
 }
 
 export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: DeliveryProofModalProps) {
+  const { t } = useDriverI18n();
   const [receiverName, setReceiverName] = useState('');
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [photoFileName, setPhotoFileName] = useState('delivery-proof.jpg');
   const [photoContentType, setPhotoContentType] = useState('image/jpeg');
   const [canvasWidth, setCanvasWidth] = useState(1);
   const [strokes, setStrokes] = useState<SignatureStroke[]>([]);
+  const [isDrawingSignature, setIsDrawingSignature] = useState(false);
+  const signatureCanvasRef = useRef<View | null>(null);
+  const isDrawingRef = useRef(false);
+  const canvasBoundsRef = useRef<SignatureCanvasBounds>({
+    x: 0,
+    y: 0,
+    width: 1,
+    height: SIGNATURE_HEIGHT
+  });
+
+  const updateCanvasMetrics = () => {
+    const node = signatureCanvasRef.current;
+    if (!node) {
+      return;
+    }
+
+    node.measureInWindow((x, y, width, height) => {
+      if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+        return;
+      }
+
+      canvasBoundsRef.current = { x, y, width, height };
+      setCanvasWidth(width);
+    });
+  };
+
+  const eventPointToCanvasPoint = (event: {
+    nativeEvent: {
+      pageX?: number;
+      pageY?: number;
+      locationX: number;
+      locationY: number;
+    };
+  }) => {
+    const bounds = canvasBoundsRef.current;
+    const pageX = event.nativeEvent.pageX;
+    const pageY = event.nativeEvent.pageY;
+
+    if (typeof pageX === 'number' && typeof pageY === 'number' && bounds.width > 1) {
+      return normalizePoint(
+        {
+          x: pageX - bounds.x,
+          y: pageY - bounds.y
+        },
+        bounds.width,
+        bounds.height
+      );
+    }
+
+    return normalizePoint(
+      {
+        x: event.nativeEvent.locationX,
+        y: event.nativeEvent.locationY
+      },
+      canvasWidth,
+      SIGNATURE_HEIGHT
+    );
+  };
 
   const totalSignaturePoints = useMemo(
     () => strokes.reduce((sum, stroke) => sum + stroke.length, 0),
@@ -142,29 +209,25 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
       PanResponder.create({
         onStartShouldSetPanResponder: () => !submitting,
         onStartShouldSetPanResponderCapture: () => !submitting,
-        onMoveShouldSetPanResponder: () => !submitting,
+        onMoveShouldSetPanResponder: (_event, gestureState) =>
+          !submitting && (Math.abs(gestureState.dx) > 1 || Math.abs(gestureState.dy) > 1),
         onMoveShouldSetPanResponderCapture: () => !submitting,
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
         onPanResponderGrant: (event) => {
-          const nextPoint = normalizePoint(
-            {
-              x: event.nativeEvent.locationX,
-              y: event.nativeEvent.locationY
-            },
-            canvasWidth,
-            SIGNATURE_HEIGHT
-          );
+          isDrawingRef.current = true;
+          setIsDrawingSignature(true);
+
+          const nextPoint = eventPointToCanvasPoint(event);
 
           setStrokes((current) => [...current, [nextPoint]]);
         },
         onPanResponderMove: (event) => {
-          const nextPoint = normalizePoint(
-            {
-              x: event.nativeEvent.locationX,
-              y: event.nativeEvent.locationY
-            },
-            canvasWidth,
-            SIGNATURE_HEIGHT
-          );
+          if (!isDrawingRef.current) {
+            return;
+          }
+
+          const nextPoint = eventPointToCanvasPoint(event);
 
           setStrokes((current) => {
             if (current.length === 0) {
@@ -181,6 +244,14 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
             next[next.length - 1] = [...activeStroke, nextPoint];
             return next;
           });
+        },
+        onPanResponderRelease: () => {
+          isDrawingRef.current = false;
+          setIsDrawingSignature(false);
+        },
+        onPanResponderTerminate: () => {
+          isDrawingRef.current = false;
+          setIsDrawingSignature(false);
         }
       }),
     [canvasWidth, submitting]
@@ -192,6 +263,8 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
     setPhotoFileName('delivery-proof.jpg');
     setPhotoContentType('image/jpeg');
     setStrokes([]);
+    isDrawingRef.current = false;
+    setIsDrawingSignature(false);
   };
 
   const handleClose = () => {
@@ -215,7 +288,7 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
 
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (permission.status !== 'granted') {
-        Alert.alert('Camera permission required', 'Allow camera access to capture delivery proof photo.');
+        Alert.alert(t('deliveryProof.alert.cameraPermissionTitle'), t('deliveryProof.alert.cameraPermissionBody'));
         return;
       }
 
@@ -231,7 +304,7 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
 
       const asset = result.assets?.[0];
       if (!asset?.uri) {
-        throw new Error('Photo capture failed. Please try again.');
+        throw new Error(t('deliveryProof.alert.photoCaptureFailed'));
       }
 
       const nextFileName = (asset.fileName ?? '').trim() || buildFileNameFromUri(asset.uri);
@@ -242,25 +315,25 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
       setPhotoContentType(nextContentType);
     } catch {
       Alert.alert(
-        'Camera unavailable',
-        'Delivery photo capture requires expo-image-picker. Install it with: npx expo install expo-image-picker'
+        t('deliveryProof.alert.cameraUnavailableTitle'),
+        t('deliveryProof.alert.cameraUnavailableBody')
       );
     }
   };
 
   const submitProof = async () => {
     if (!photoUri) {
-      Alert.alert('Delivery photo required', 'Capture a delivery photo before completing the trip.');
+      Alert.alert(t('deliveryProof.alert.photoRequiredTitle'), t('deliveryProof.alert.photoRequiredBody'));
       return;
     }
 
     if (!receiverNameValid) {
-      Alert.alert('Receiver name required', 'Enter receiver full name to confirm delivery.');
+      Alert.alert(t('deliveryProof.alert.receiverNameTitle'), t('deliveryProof.alert.receiverNameBody'));
       return;
     }
 
     if (!signatureReady || !signaturePayload) {
-      Alert.alert('Receiver signature required', 'Collect receiver signature before completing delivery.');
+      Alert.alert(t('deliveryProof.alert.signatureRequiredTitle'), t('deliveryProof.alert.signatureRequiredBody'));
       return;
     }
 
@@ -278,18 +351,23 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
           <View style={styles.headerRow}>
-            <Text style={styles.title}>Delivery Proof Required</Text>
+            <Text style={styles.title}>{t('deliveryProof.title')}</Text>
             <Pressable onPress={handleClose} disabled={submitting}>
-              <Text style={styles.closeText}>Close</Text>
+              <Text style={styles.closeText}>{t('common.close')}</Text>
             </Pressable>
           </View>
 
-          <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-            <Text style={styles.label}>Receiver Name</Text>
+          <ScrollView
+            style={styles.scrollArea}
+            contentContainerStyle={styles.scrollContent}
+            scrollEnabled={!isDrawingSignature && !submitting}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={styles.label}>{t('deliveryProof.receiverName')}</Text>
             <TextInput
               value={receiverName}
               onChangeText={setReceiverName}
-              placeholder="Enter receiver full name"
+              placeholder={t('deliveryProof.receiverPlaceholder')}
               placeholderTextColor="#94A3B8"
               autoCapitalize="words"
               autoCorrect={false}
@@ -299,38 +377,43 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
 
             <View style={styles.block}>
               <View style={styles.blockHeader}>
-                <Text style={styles.label}>Delivery Photo</Text>
+                <Text style={styles.label}>{t('deliveryProof.deliveryPhoto')}</Text>
                 <Pressable style={styles.actionPill} onPress={() => void captureDeliveryPhoto()} disabled={submitting}>
-                  <Text style={styles.actionPillText}>{photoUri ? 'Retake' : 'Take Photo'}</Text>
+                  <Text style={styles.actionPillText}>{photoUri ? t('deliveryProof.retakePhoto') : t('deliveryProof.takePhoto')}</Text>
                 </Pressable>
               </View>
 
               {photoUri ? (
                 <Image source={{ uri: photoUri }} style={styles.photoPreview} resizeMode="cover" />
               ) : (
-                <Text style={styles.helperText}>Capture clear photo of delivered goods and receiver handoff.</Text>
+                <Text style={styles.helperText}>{t('deliveryProof.photoHint')}</Text>
               )}
             </View>
 
             <View style={styles.block}>
               <View style={styles.blockHeader}>
-                <Text style={styles.label}>Receiver Signature</Text>
+                <Text style={styles.label}>{t('deliveryProof.signature')}</Text>
                 <Pressable
                   style={styles.actionPill}
                   onPress={() => setStrokes([])}
                   disabled={submitting || strokes.length === 0}
                 >
-                  <Text style={styles.actionPillText}>Clear</Text>
+                  <Text style={styles.actionPillText}>{t('deliveryProof.clear')}</Text>
                 </Pressable>
               </View>
 
               <View
+                ref={(node) => {
+                  signatureCanvasRef.current = node;
+                }}
+                collapsable={false}
                 style={styles.signatureCanvas}
                 onLayout={(event) => {
                   const width = event.nativeEvent.layout.width;
                   if (width > 0 && Number.isFinite(width)) {
                     setCanvasWidth(width);
                   }
+                  updateCanvasMetrics();
                 }}
                 {...panResponder.panHandlers}
               >
@@ -352,7 +435,7 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
               </View>
 
               <Text style={styles.helperText}>
-                Ask receiver to sign in the box. Minimum {SIGNATURE_MIN_POINTS} strokes/points required.
+                {t('deliveryProof.signatureHint', { points: SIGNATURE_MIN_POINTS })}
               </Text>
             </View>
           </ScrollView>
@@ -365,7 +448,7 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
             {submitting ? (
               <ActivityIndicator color={colors.white} />
             ) : (
-              <Text style={styles.submitText}>Submit Proof and Complete</Text>
+              <Text style={styles.submitText}>{t('deliveryProof.submit')}</Text>
             )}
           </Pressable>
         </View>
@@ -426,13 +509,13 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     color: colors.accent,
     fontFamily: typography.body,
-    backgroundColor: '#FFF7ED'
+    backgroundColor: '#F8FAFF'
   },
   block: {
     borderWidth: 1,
-    borderColor: '#F1D3A6',
+    borderColor: '#BFDBFE',
     borderRadius: radius.sm,
-    backgroundColor: '#FFFBF5',
+    backgroundColor: '#F8FAFF',
     padding: spacing.sm,
     gap: spacing.xs
   },
@@ -445,7 +528,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.secondary,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 10,
     paddingVertical: 5
   },
@@ -466,8 +549,8 @@ const styles = StyleSheet.create({
     height: SIGNATURE_HEIGHT,
     borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: '#B45309',
-    backgroundColor: '#FFFDF8',
+    borderColor: '#1E40AF',
+    backgroundColor: '#F8FAFF',
     overflow: 'hidden'
   },
   signatureSegment: {

@@ -1,4 +1,4 @@
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { isUnsetOrPlaceholder } from './config-placeholder.util';
 
@@ -23,6 +23,11 @@ interface S3UploadUrlResult {
   uploadUrl: string;
   fileUrl: string;
   mode: string;
+}
+
+interface BuildS3DownloadUrlInput {
+  fileKey: string;
+  expiresInSeconds?: number;
 }
 
 function encodeObjectKeyForUrl(fileKey: string) {
@@ -86,4 +91,49 @@ export async function buildS3UploadUrl(
     fileUrl: `${endpoint}/${bucket}/${encodeObjectKeyForUrl(input.fileKey)}`,
     mode: `s3-${region}`
   };
+}
+
+export async function buildS3DownloadUrl(
+  config: S3UploadConfig,
+  input: BuildS3DownloadUrlInput
+): Promise<string | null> {
+  if (!isS3UploadConfigured(config)) {
+    return null;
+  }
+
+  const normalizedKey = input.fileKey.trim();
+  if (!normalizedKey) {
+    return null;
+  }
+
+  const endpoint = String(config.endpoint).trim().replace(/\/$/, '');
+  const bucket = String(config.bucket).trim();
+  const region = normalizeRegion(config.region);
+  const accessKeyId = String(config.accessKeyId).trim();
+  const secretAccessKey = String(config.secretAccessKey).trim();
+
+  const s3 = new S3Client({
+    region,
+    endpoint,
+    forcePathStyle: true,
+    credentials: {
+      accessKeyId,
+      secretAccessKey
+    }
+  });
+
+  try {
+    return await getSignedUrl(
+      s3,
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: normalizedKey
+      }),
+      {
+        expiresIn: input.expiresInSeconds ?? DEFAULT_SIGNED_URL_TTL_SECONDS
+      }
+    );
+  } catch {
+    return null;
+  }
 }

@@ -15,12 +15,19 @@ import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { AnimatedTextField } from '../../components/AnimatedTextField';
 import { FormScreen } from '../../components/FormScreen';
 import { OnboardingCoachBanner } from '../../components/OnboardingCoachBanner';
+import { useDriverI18n } from '../../i18n/useDriverI18n';
 
 type Props = NativeStackScreenProps<OnboardingStackParamList, 'OnboardingVehicle'>;
 
 const vehicleOptions: VehicleType[] = ['THREE_WHEELER', 'MINI_TRUCK', 'TRUCK'];
+const vehicleOptionLabelKeys: Record<VehicleType, string> = {
+  THREE_WHEELER: 'onboarding.vehicle.option.threeWheeler',
+  MINI_TRUCK: 'onboarding.vehicle.option.miniTruck',
+  TRUCK: 'onboarding.vehicle.option.truck'
+};
 
 export function OnboardingVehicleScreen({ navigation }: Props) {
+  const { t } = useDriverI18n();
   const loading = useOnboardingStore((state) => state.loading);
   const updateVehicle = useOnboardingStore((state) => state.updateVehicle);
   const load = useOnboardingStore((state) => state.load);
@@ -63,7 +70,7 @@ export function OnboardingVehicleScreen({ navigation }: Props) {
 
   const save = async () => {
     if (!vehicleNumber.trim() || !licenseNumber.trim()) {
-      Alert.alert('Required details missing', 'Enter vehicle number and license number to continue.');
+      Alert.alert(t('onboarding.vehicle.requiredTitle'), t('onboarding.vehicle.requiredBody'));
       return;
     }
 
@@ -79,7 +86,7 @@ export function OnboardingVehicleScreen({ navigation }: Props) {
       navigation.navigate('OnboardingBank');
     } catch {
       const latestError = useOnboardingStore.getState().error;
-      Alert.alert('Could not save', latestError ?? 'Please check vehicle details and retry.');
+      Alert.alert(t('onboarding.vehicle.saveErrorTitle'), latestError ?? t('onboarding.vehicle.saveErrorBody'));
     }
   };
 
@@ -87,9 +94,9 @@ export function OnboardingVehicleScreen({ navigation }: Props) {
     <FormScreen>
       <View style={styles.container}>
         <OnboardingCoachBanner step={2} total={5} tipKey="onboarding.help.vehicle" />
-        <Text style={styles.title}>Onboarding: Vehicle</Text>
+        <Text style={styles.title}>{t('onboarding.vehicle.title')}</Text>
         <View style={styles.card}>
-          <Text style={styles.label}>Vehicle Type</Text>
+          <Text style={styles.label}>{t('onboarding.vehicle.vehicleType')}</Text>
           <View style={styles.vehicleRow}>
             {vehicleOptions.map((option) => (
               <Pressable
@@ -101,54 +108,54 @@ export function OnboardingVehicleScreen({ navigation }: Props) {
                 }}
               >
                 <Text style={[styles.vehicleChipText, vehicleType === option && styles.vehicleChipTextActive]}>
-                  {option}
+                  {t(vehicleOptionLabelKeys[option])}
                 </Text>
               </Pressable>
             ))}
           </View>
 
           <AnimatedTextField
-            label="Vehicle Number"
+            label={t('onboarding.field.vehicleNumber')}
             value={vehicleNumber}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setVehicleNumber(value);
             }}
             autoCapitalize="characters"
-            placeholder="KA01AB1234"
+            placeholder={t('onboarding.placeholder.vehicleNumber')}
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="License Number"
+            label={t('onboarding.field.licenseNumber')}
             value={licenseNumber}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setLicenseNumber(value);
             }}
             autoCapitalize="characters"
-            placeholder="DL0420120012345"
+            placeholder={t('onboarding.placeholder.licenseNumber')}
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="Aadhaar Number"
+            label={t('onboarding.field.aadhaarNumber')}
             value={aadhaarNumber}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setAadhaarNumber(value);
             }}
             keyboardType="number-pad"
-            placeholder="123412341234"
+            placeholder={t('onboarding.placeholder.aadhaarNumber')}
             returnKeyType="next"
           />
           <AnimatedTextField
-            label="RC Number"
+            label={t('onboarding.field.rcNumber')}
             value={rcNumber}
             onChangeText={(value) => {
               setHasLocalEdits(true);
               setRcNumber(value);
             }}
             autoCapitalize="characters"
-            placeholder="KA01RC1234"
+            placeholder={t('onboarding.placeholder.rcNumber')}
             returnKeyType="done"
           />
 
@@ -158,7 +165,7 @@ export function OnboardingVehicleScreen({ navigation }: Props) {
             {loading ? (
               <ActivityIndicator color={colors.white} />
             ) : (
-              <Text style={styles.buttonText}>Save & Continue</Text>
+              <Text style={styles.buttonText}>{t('onboarding.saveContinue')}</Text>
             )}
           </Pressable>
         </View>
@@ -186,7 +193,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    backgroundColor: '#FFF7ED'
+    backgroundColor: '#F8FAFF'
   },
   vehicleChipActive: {
     backgroundColor: colors.secondary,

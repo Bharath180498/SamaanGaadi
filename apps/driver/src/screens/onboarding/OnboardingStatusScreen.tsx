@@ -11,8 +11,10 @@ import { colors, radius, spacing, typography } from '../../theme';
 import { useDriverSessionStore } from '../../store/useDriverSessionStore';
 import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { OnboardingCoachBanner } from '../../components/OnboardingCoachBanner';
+import { useDriverI18n } from '../../i18n/useDriverI18n';
 
 export function OnboardingStatusScreen() {
+  const { t } = useDriverI18n();
   const sessionRefresh = useDriverSessionStore((state) => state.refreshOnboardingStatus);
   const onboardingStatus = useDriverSessionStore((state) => state.onboardingStatus);
   const load = useOnboardingStore((state) => state.load);
@@ -26,17 +28,17 @@ export function OnboardingStatusScreen() {
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
         <OnboardingCoachBanner step={5} total={5} tipKey="onboarding.help.status" />
-        <Text style={styles.title}>KYC Verification Status</Text>
+        <Text style={styles.title}>{t('onboarding.status.title')}</Text>
         <View style={styles.card}>
-          <Text style={styles.label}>Current Status</Text>
-          <Text style={styles.status}>{onboardingStatus ?? 'SUBMITTED'}</Text>
+          <Text style={styles.label}>{t('onboarding.status.current')}</Text>
+          <Text style={styles.status}>{onboardingStatus ?? t('onboarding.status.defaultSubmitted')}</Text>
 
           <Text style={styles.subtitle}>
-            If status is APPROVED, this screen will close automatically and driver dashboard will open.
+            {t('onboarding.status.subtitle')}
           </Text>
 
           <Pressable style={styles.refreshButton} onPress={() => void Promise.all([load(), sessionRefresh()])}>
-            {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.refreshText}>Refresh status</Text>}
+            {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.refreshText}>{t('onboarding.status.refresh')}</Text>}
           </Pressable>
         </View>
       </View>

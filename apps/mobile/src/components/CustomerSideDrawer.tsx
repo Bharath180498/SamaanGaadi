@@ -149,8 +149,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12
   },
   itemButtonActive: {
-    backgroundColor: '#FFF7ED',
-    borderColor: '#FDBA74'
+    backgroundColor: '#F8FAFF',
+    borderColor: '#93C5FD'
   },
   itemText: {
     fontFamily: 'Manrope_700Bold',

@@ -6,11 +6,14 @@ import { NavShell } from '../../components/nav-shell';
 import { fetcher, postJson } from '../../lib/api';
 import { mergeQargoAiContext } from '../../lib/qargo-ai-context';
 
-interface PendingKyc {
+interface KycQueueItem {
   id: string;
   status: string;
   createdAt: string;
+  reviewedAt?: string | null;
   riskSignals: unknown;
+  providerResponse?: unknown;
+  reviewedByAdmin?: AdminActor | null;
   user: {
     id: string;
     name: string;
@@ -180,22 +183,65 @@ function statusTone(status: string) {
   return 'bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-400/30';
 }
 
-function toSignalList(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [] as string[];
+function toSignalList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((signal) => {
+        if (typeof signal === 'string') {
+          return signal.trim();
+        }
+
+        try {
+          return JSON.stringify(signal);
+        } catch {
+          return String(signal);
+        }
+      })
+      .filter((signal) => signal.length > 0);
   }
 
-  return value.map((signal) => {
-    if (typeof signal === 'string') {
-      return signal;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+
+  if (value && typeof value === 'object') {
+    const row = value as Record<string, unknown>;
+    const nestedCandidates = [
+      row.riskSignals,
+      row.risk_signals,
+      row.alerts,
+      row.result && typeof row.result === 'object' ? (row.result as Record<string, unknown>).riskSignals : undefined,
+      row.result && typeof row.result === 'object' ? (row.result as Record<string, unknown>).risk_signals : undefined
+    ];
+
+    for (const candidate of nestedCandidates) {
+      const signals = toSignalList(candidate);
+      if (signals.length > 0) {
+        return signals;
+      }
     }
 
     try {
-      return JSON.stringify(signal);
+      return [JSON.stringify(row)];
     } catch {
-      return String(signal);
+      return [String(row)];
     }
-  });
+  }
+
+  return [] as string[];
+}
+
+function extractVerificationSignals(record: {
+  riskSignals: unknown;
+  providerResponse?: unknown;
+}): string[] {
+  const directSignals = toSignalList(record.riskSignals);
+  if (directSignals.length > 0) {
+    return directSignals;
+  }
+
+  return toSignalList(record.providerResponse);
 }
 
 function jsonPreview(value: unknown) {
@@ -253,11 +299,24 @@ function DetailGrid({
 }
 
 export default function KycReviewsPage() {
-  const { data, isLoading, mutate } = useSWR<PendingKyc[]>('/admin/kyc/pending', fetcher);
+  const [queueScope, setQueueScope] = useState<'pending' | 'approved'>('pending');
+  const { data, isLoading, mutate } = useSWR<KycQueueItem[]>('/admin/kyc/pending', fetcher);
+  const {
+    data: approvedData,
+    isLoading: approvedLoading,
+    mutate: mutateApproved
+  } = useSWR<KycQueueItem[]>('/admin/kyc/history?status=VERIFIED&limit=200', fetcher);
   const [selectedVerificationId, setSelectedVerificationId] = useState<string>();
   const [busyId, setBusyId] = useState<string>();
   const [rejectReason, setRejectReason] = useState('Documents did not pass manual review');
   const [actionError, setActionError] = useState<string>();
+
+  const activeQueue = useMemo(
+    () => (queueScope === 'approved' ? approvedData ?? [] : data ?? []),
+    [approvedData, data, queueScope]
+  );
+
+  const queueLoading = queueScope === 'approved' ? approvedLoading : isLoading;
 
   const selectedDetailsPath = useMemo(
     () => (selectedVerificationId ? `/admin/kyc/${selectedVerificationId}` : null),
@@ -270,15 +329,15 @@ export default function KycReviewsPage() {
   );
 
   useEffect(() => {
-    if (!data?.length) {
+    if (!activeQueue.length) {
       setSelectedVerificationId(undefined);
       return;
     }
 
-    if (!selectedVerificationId || !data.some((entry) => entry.id === selectedVerificationId)) {
-      setSelectedVerificationId(data[0].id);
+    if (!selectedVerificationId || !activeQueue.some((entry) => entry.id === selectedVerificationId)) {
+      setSelectedVerificationId(activeQueue[0].id);
     }
-  }, [data, selectedVerificationId]);
+  }, [activeQueue, selectedVerificationId]);
 
   useEffect(() => {
     if (!details) {
@@ -295,13 +354,22 @@ export default function KycReviewsPage() {
     });
   }, [selectedVerificationId]);
 
+  const detailSignals = useMemo(
+    () => (details ? extractVerificationSignals(details.verification) : []),
+    [details]
+  );
+
+  const canTakeManualAction = useMemo(() => {
+    const status = String(details?.verification.status ?? '').toUpperCase();
+    return status === 'PENDING' || status === 'IN_REVIEW' || status === 'INCONCLUSIVE';
+  }, [details?.verification.status]);
+
   const approve = async (verificationId: string) => {
     setActionError(undefined);
     setBusyId(verificationId);
     try {
       await postJson(`/admin/kyc/${verificationId}/approve`, {});
-      await mutate();
-      await mutateDetails();
+      await Promise.all([mutate(), mutateApproved(), mutateDetails()]);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Failed to approve verification');
     } finally {
@@ -316,8 +384,7 @@ export default function KycReviewsPage() {
       await postJson(`/admin/kyc/${verificationId}/reject`, {
         reason: rejectReason.trim() || 'Documents did not pass manual review'
       });
-      await mutate();
-      await mutateDetails();
+      await Promise.all([mutate(), mutateApproved(), mutateDetails()]);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Failed to reject verification');
     } finally {
@@ -329,17 +396,46 @@ export default function KycReviewsPage() {
     <NavShell>
       <section className="grid gap-5 2xl:grid-cols-[minmax(330px,0.9fr)_minmax(0,1.7fr)]">
         <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 backdrop-blur">
-          <h2 className="font-sora text-2xl text-slate-100">KYC Review Queue</h2>
+          <h2 className="font-sora text-2xl text-slate-100">KYC Reviews</h2>
           <p className="mt-1 font-manrope text-sm text-slate-400">
-            Select a verification to inspect all submitted details.
+            Switch between active review queue and approved KYC history.
           </p>
 
-          {isLoading ? <p className="mt-4 font-manrope text-slate-400">Loading queue...</p> : null}
+          <div className="mt-4 inline-flex rounded-lg border border-slate-700 bg-slate-950/70 p-1">
+            <button
+              type="button"
+              onClick={() => setQueueScope('pending')}
+              className={`rounded-md px-3 py-1.5 font-manrope text-xs font-semibold transition ${
+                queueScope === 'pending'
+                  ? 'bg-cyan-500/20 text-cyan-200'
+                  : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-200'
+              }`}
+            >
+              Pending Queue
+            </button>
+            <button
+              type="button"
+              onClick={() => setQueueScope('approved')}
+              className={`rounded-md px-3 py-1.5 font-manrope text-xs font-semibold transition ${
+                queueScope === 'approved'
+                  ? 'bg-emerald-500/20 text-emerald-200'
+                  : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-200'
+              }`}
+            >
+              Approved History
+            </button>
+          </div>
+
+          {queueLoading ? (
+            <p className="mt-4 font-manrope text-slate-400">
+              {queueScope === 'approved' ? 'Loading approved history...' : 'Loading pending queue...'}
+            </p>
+          ) : null}
 
           <div className="mt-5 space-y-3 overflow-auto pr-1 2xl:max-h-[74vh]">
-            {(data ?? []).map((entry) => {
+            {activeQueue.map((entry) => {
               const isSelected = selectedVerificationId === entry.id;
-              const signals = toSignalList(entry.riskSignals);
+              const signals = extractVerificationSignals(entry);
 
               return (
                 <button
@@ -362,6 +458,11 @@ export default function KycReviewsPage() {
                   <p className="mt-2 font-manrope text-xs text-slate-500">
                     Verification #{shortId(entry.id)} • Raised {formatDate(entry.createdAt)}
                   </p>
+                  {queueScope === 'approved' ? (
+                    <p className="mt-1 font-manrope text-xs text-emerald-300">
+                      Reviewed {formatDate(entry.reviewedAt)} {entry.reviewedByAdmin ? `• ${entry.reviewedByAdmin.name}` : ''}
+                    </p>
+                  ) : null}
                   {signals.length ? (
                     <p className="mt-1 font-manrope text-xs text-amber-300">Signals: {signals.join(', ')}</p>
                   ) : null}
@@ -370,8 +471,10 @@ export default function KycReviewsPage() {
             })}
           </div>
 
-          {!isLoading && (data?.length ?? 0) === 0 ? (
-            <p className="mt-4 font-manrope text-slate-400">No pending KYC reviews.</p>
+          {!queueLoading && activeQueue.length === 0 ? (
+            <p className="mt-4 font-manrope text-slate-400">
+              {queueScope === 'approved' ? 'No approved KYC records found.' : 'No pending KYC reviews.'}
+            </p>
           ) : null}
         </article>
 
@@ -405,35 +508,54 @@ export default function KycReviewsPage() {
               </header>
 
               <div className="space-y-5 p-5">
-                <section className="rounded-lg border border-slate-800 bg-slate-950/50 p-4">
-                  <p className="font-manrope text-xs uppercase tracking-wide text-slate-500">Manual action</p>
-                  <label className="mt-3 block">
-                    <span className="font-manrope text-xs text-slate-400">Rejection reason</span>
-                    <textarea
-                      value={rejectReason}
-                      onChange={(event) => setRejectReason(event.target.value)}
-                      rows={3}
-                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-manrope text-sm text-slate-200 outline-none ring-cyan-500/50 focus:ring"
-                    />
-                  </label>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 font-manrope text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
-                      onClick={() => void approve(details.verification.id)}
-                      disabled={busyId === details.verification.id}
-                    >
-                      {busyId === details.verification.id ? 'Saving...' : 'Approve'}
-                    </button>
-                    <button
-                      className="rounded-md border border-rose-500/40 bg-rose-500/15 px-4 py-2 font-manrope text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20"
-                      onClick={() => void reject(details.verification.id)}
-                      disabled={busyId === details.verification.id}
-                    >
-                      {busyId === details.verification.id ? 'Saving...' : 'Reject'}
-                    </button>
-                  </div>
-                  {actionError ? <p className="mt-2 font-manrope text-sm text-rose-300">{actionError}</p> : null}
+                <section className="rounded-lg border border-amber-600/30 bg-amber-500/5 p-4">
+                  <h4 className="font-sora text-base text-amber-100">Risk Signals ({detailSignals.length})</h4>
+                  {detailSignals.length > 0 ? (
+                    <ul className="mt-3 space-y-2">
+                      {detailSignals.map((signal, index) => (
+                        <li key={`${signal}-${index}`} className="rounded-md bg-slate-900/80 p-2 font-manrope text-sm text-amber-200">
+                          {signal}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 font-manrope text-sm text-slate-400">
+                      No risk signals reported by provider response for this verification.
+                    </p>
+                  )}
                 </section>
+
+                {canTakeManualAction ? (
+                  <section className="rounded-lg border border-slate-800 bg-slate-950/50 p-4">
+                    <p className="font-manrope text-xs uppercase tracking-wide text-slate-500">Manual action</p>
+                    <label className="mt-3 block">
+                      <span className="font-manrope text-xs text-slate-400">Rejection reason</span>
+                      <textarea
+                        value={rejectReason}
+                        onChange={(event) => setRejectReason(event.target.value)}
+                        rows={3}
+                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-manrope text-sm text-slate-200 outline-none ring-cyan-500/50 focus:ring"
+                      />
+                    </label>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 font-manrope text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
+                        onClick={() => void approve(details.verification.id)}
+                        disabled={busyId === details.verification.id}
+                      >
+                        {busyId === details.verification.id ? 'Saving...' : 'Approve'}
+                      </button>
+                      <button
+                        className="rounded-md border border-rose-500/40 bg-rose-500/15 px-4 py-2 font-manrope text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20"
+                        onClick={() => void reject(details.verification.id)}
+                        disabled={busyId === details.verification.id}
+                      >
+                        {busyId === details.verification.id ? 'Saving...' : 'Reject'}
+                      </button>
+                    </div>
+                    {actionError ? <p className="mt-2 font-manrope text-sm text-rose-300">{actionError}</p> : null}
+                  </section>
+                ) : null}
 
                 <div className="grid gap-4 xl:grid-cols-2">
                   <DetailGrid
@@ -709,10 +831,10 @@ export default function KycReviewsPage() {
                   />
 
                   <section className="rounded-lg border border-slate-800 bg-slate-950/50 p-4">
-                    <h4 className="font-sora text-base text-slate-100">Risk Signals</h4>
-                    {toSignalList(details.verification.riskSignals).length ? (
+                    <h4 className="font-sora text-base text-slate-100">Risk Signals Snapshot</h4>
+                    {detailSignals.length ? (
                       <ul className="mt-3 space-y-2">
-                        {toSignalList(details.verification.riskSignals).map((signal, index) => (
+                        {detailSignals.map((signal, index) => (
                           <li key={`${signal}-${index}`} className="rounded-md bg-slate-900/80 p-2 font-manrope text-sm text-amber-200">
                             {signal}
                           </li>
@@ -736,11 +858,11 @@ export default function KycReviewsPage() {
                     Verification History ({details.verificationHistory.length})
                   </h4>
                   <div className="mt-3 space-y-2">
-                    {details.verificationHistory.map((historyEntry) => (
-                      <article
-                        key={historyEntry.id}
-                        className="rounded-md border border-slate-800 bg-slate-900/70 p-3"
-                      >
+                    {details.verificationHistory.map((historyEntry) => {
+                      const historySignals = extractVerificationSignals(historyEntry);
+
+                      return (
+                        <article key={historyEntry.id} className="rounded-md border border-slate-800 bg-slate-900/70 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="font-manrope text-sm text-slate-200">
                             #{shortId(historyEntry.id)} • {historyEntry.provider}
@@ -752,11 +874,25 @@ export default function KycReviewsPage() {
                         <p className="mt-1 font-manrope text-xs text-slate-500">
                           {formatDate(historyEntry.createdAt)} • Provider Ref: {displayValue(historyEntry.providerRef)}
                         </p>
+                        <p className="mt-1 font-manrope text-xs text-slate-500">
+                          Reviewed: {formatDate(historyEntry.reviewedAt)} •{' '}
+                          {historyEntry.reviewedByAdmin
+                            ? `${historyEntry.reviewedByAdmin.name} (${historyEntry.reviewedByAdmin.phone})`
+                            : '—'}
+                        </p>
+                        {historySignals.length ? (
+                          <p className="mt-2 font-manrope text-xs text-amber-300">
+                            Signals: {historySignals.join(' • ')}
+                          </p>
+                        ) : (
+                          <p className="mt-2 font-manrope text-xs text-slate-500">Signals: none reported</p>
+                        )}
                         {historyEntry.reviewNotes ? (
                           <p className="mt-2 font-manrope text-xs text-slate-300">Review note: {historyEntry.reviewNotes}</p>
                         ) : null}
-                      </article>
-                    ))}
+                        </article>
+                      );
+                    })}
                   </div>
                 </section>
               </div>

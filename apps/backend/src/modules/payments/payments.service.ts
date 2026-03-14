@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PaymentProvider, PaymentStatus } from '@prisma/client';
+import { PaymentProvider, PaymentStatus, TripStatus } from '@prisma/client';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ConfirmPaymentDto } from './dto/confirm-payment.dto';
+import { DriverConfirmPaymentDto } from './dto/driver-confirm-payment.dto';
 
 interface CashfreeWebhookPayload {
   type?: string;
@@ -89,9 +90,17 @@ export class PaymentsService {
     return Math.round(amount * 100) / 100;
   }
 
-  private pricingBreakdown(provider: PaymentProvider, baseAmount: number) {
+  private pricingBreakdown(
+    provider: PaymentProvider,
+    baseAmount: number,
+    options?: {
+      applySurcharge?: boolean;
+    }
+  ) {
+    const applySurcharge = options?.applySurcharge ?? true;
     const surchargePercent =
-      provider === PaymentProvider.RAZORPAY || provider === PaymentProvider.CASHFREE
+      applySurcharge &&
+      (provider === PaymentProvider.RAZORPAY || provider === PaymentProvider.CASHFREE)
         ? PaymentsService.CARD_SURCHARGE_PERCENT
         : 0;
     const surchargeAmount = this.roundCurrency((baseAmount * surchargePercent) / 100);
@@ -123,6 +132,11 @@ export class PaymentsService {
       return digits.slice(-10);
     }
     return digits.padStart(10, '0');
+  }
+
+  private normalizeUpiVpa(input?: string | null) {
+    const value = (input ?? '').trim().toLowerCase();
+    return value || undefined;
   }
 
   private resolveWebhookProviderRef(payload: {
@@ -235,6 +249,15 @@ export class PaymentsService {
     });
 
     return `upi://pay?${params.toString()}`;
+  }
+
+  private buildUpiQrImageUrl(upiIntentUrl: string) {
+    if (!upiIntentUrl.trim()) {
+      return undefined;
+    }
+    return `https://api.qrserver.com/v1/create-qr-code/?size=640x640&format=png&qzone=2&data=${encodeURIComponent(
+      upiIntentUrl
+    )}`;
   }
 
   private buildCashfreeHostedCheckoutUrl(paymentSessionId: string) {
@@ -436,7 +459,9 @@ export class PaymentsService {
     const computedBaseAmount = this.roundCurrency(
       Number(order.finalPrice ?? order.estimatedPrice ?? payload.amount)
     );
-    const breakdown = this.pricingBreakdown(payload.provider, computedBaseAmount);
+    const breakdown = this.pricingBreakdown(payload.provider, computedBaseAmount, {
+      applySurcharge: payload.applySurcharge
+    });
 
     const defaultProviderRef = `intent_${payload.provider.toLowerCase()}_${Date.now()}`;
 
@@ -446,14 +471,22 @@ export class PaymentsService {
         amount: breakdown.totalAmount,
         provider: payload.provider,
         status: PaymentStatus.PENDING,
-        providerRef: defaultProviderRef
+        providerRef: defaultProviderRef,
+        directPayToDriver: false,
+        directUpiVpa: null,
+        directUpiName: null,
+        driverPaymentMethodId: null
       },
       create: {
         orderId: payload.orderId,
         amount: breakdown.totalAmount,
         provider: payload.provider,
         status: PaymentStatus.PENDING,
-        providerRef: defaultProviderRef
+        providerRef: defaultProviderRef,
+        directPayToDriver: false,
+        directUpiVpa: null,
+        directUpiName: null,
+        driverPaymentMethodId: null
       }
     });
 
@@ -518,12 +551,6 @@ export class PaymentsService {
     }
 
     if (payload.provider === PaymentProvider.UPI) {
-      if (payload.directPayToDriver) {
-        throw new BadRequestException(
-          'Direct-to-driver UPI is disabled. Customer payments are held by QARGO and settled after delivery.'
-        );
-      }
-
       const driverPaymentMethods = order.trip?.driver?.paymentMethods ?? [];
       const tripPreferredMethod = order.trip?.driverPreferredPaymentMethodId
         ? driverPaymentMethods.find((method) => method.id === order.trip?.driverPreferredPaymentMethodId)
@@ -537,17 +564,68 @@ export class PaymentsService {
         driverPaymentMethods.find((method) => method.isPreferred) ??
         driverPaymentMethods[0];
 
-      const resolvedPayeeVpa = this.upiPayeeVpa || 'qargo.demo@upi';
-      const resolvedPayeeName = this.upiPayeeName;
-      const isDirectToDriver = false;
+      const directModeRequested = Boolean(payload.directPayToDriver);
+      if (directModeRequested && payload.driverPaymentMethodId && !selectedDriverMethod) {
+        throw new BadRequestException('Selected driver payment method is unavailable. Please refresh and retry.');
+      }
+      const fallbackDriverUpi = this.normalizeUpiVpa(
+        order.trip?.driverPreferredUpiId ?? order.trip?.driver?.payoutAccount?.upiId
+      );
+      const selectedMethodUpi = this.normalizeUpiVpa(selectedDriverMethod?.upiId);
+      const preferredMethodUpi = this.normalizeUpiVpa(
+        tripPreferredMethod?.upiId ?? preferredDriverMethod?.upiId
+      );
+      const requestedDirectVpa = this.normalizeUpiVpa(payload.directUpiVpa);
+
+      let resolvedPayeeVpa = this.upiPayeeVpa || 'qargo.demo@upi';
+      let resolvedPayeeName = this.upiPayeeName;
+      let isDirectToDriver = false;
+
+      if (directModeRequested) {
+        const directVpa = requestedDirectVpa ?? selectedMethodUpi ?? preferredMethodUpi ?? fallbackDriverUpi;
+        if (!directVpa) {
+          throw new BadRequestException('Driver UPI is unavailable. Ask driver to update payout UPI and retry.');
+        }
+
+        resolvedPayeeVpa = directVpa;
+        resolvedPayeeName =
+          (payload.directUpiName ?? '').trim() ||
+          (order.trip?.driver?.user?.name ?? '').trim() ||
+          (selectedDriverMethod?.label ?? '').trim() ||
+          this.upiPayeeName ||
+          'Driver UPI';
+        isDirectToDriver = true;
+      }
+
       const upiIntentUrl = this.buildUpiIntent(payment.id, Number(payment.amount), {
         vpa: resolvedPayeeVpa,
         name: resolvedPayeeName
       });
-      const providerRef = `upi_${payment.id}`;
+      const storedOrPreferredQrImageUrl =
+        selectedDriverMethod?.qrImageUrl ??
+        tripPreferredMethod?.qrImageUrl ??
+        preferredDriverMethod?.qrImageUrl ??
+        order.trip?.driverPreferredUpiQrImageUrl ??
+        undefined;
+      const resolvedQrImageUrl =
+        storedOrPreferredQrImageUrl || this.buildUpiQrImageUrl(upiIntentUrl);
+      const providerRef = `${isDirectToDriver ? 'upi_direct' : 'upi_escrow'}_${payment.id}`;
       const updated = await this.prisma.payment.update({
         where: { id: payment.id },
-        data: { providerRef }
+        data: {
+          providerRef,
+          directPayToDriver: isDirectToDriver,
+          directUpiVpa: isDirectToDriver ? resolvedPayeeVpa : null,
+          directUpiName: isDirectToDriver ? resolvedPayeeName : null,
+          driverPaymentMethodId:
+            isDirectToDriver
+              ? selectedDriverMethod?.id ??
+                tripPreferredMethod?.id ??
+                preferredDriverMethod?.id ??
+                payload.driverPaymentMethodId ??
+                null
+              : null
+        }
       });
 
       return {
@@ -568,14 +646,9 @@ export class PaymentsService {
             preferredDriverMethod?.id ??
             order.trip?.driverPreferredPaymentMethodId ??
             undefined,
-          qrImageUrl:
-            selectedDriverMethod?.qrImageUrl ??
-            tripPreferredMethod?.qrImageUrl ??
-            preferredDriverMethod?.qrImageUrl ??
-            order.trip?.driverPreferredUpiQrImageUrl ??
-            undefined,
+          qrImageUrl: resolvedQrImageUrl,
           preferredByDriver: Boolean(order.trip?.driverPreferredUpiId),
-          settlementMode: 'QARGO_ESCROW'
+          settlementMode: isDirectToDriver ? 'DRIVER_DIRECT' : 'QARGO_ESCROW'
         },
         ...breakdown
       };
@@ -615,6 +688,79 @@ export class PaymentsService {
       providerRef: updated.providerRef,
       settledAt:
         updated.status === PaymentStatus.CAPTURED ? updated.updatedAt.toISOString() : undefined
+    };
+  }
+
+  async driverConfirmDirectUpiPayment(payload: DriverConfirmPaymentDto) {
+    const trip = await this.prisma.trip.findFirst({
+      where: {
+        orderId: payload.orderId,
+        driverId: payload.driverId,
+        status: {
+          in: [
+            TripStatus.ASSIGNED,
+            TripStatus.DRIVER_EN_ROUTE,
+            TripStatus.ARRIVED_PICKUP,
+            TripStatus.LOADING,
+            TripStatus.IN_TRANSIT,
+            TripStatus.COMPLETED
+          ]
+        }
+      },
+      include: {
+        order: {
+          include: {
+            payment: true
+          }
+        }
+      }
+    });
+
+    if (!trip) {
+      throw new NotFoundException('Trip not found for this driver and order');
+    }
+
+    const payment = trip.order.payment;
+    if (!payment) {
+      throw new BadRequestException('No payment intent found for this order');
+    }
+
+    if (payment.provider !== PaymentProvider.UPI || !payment.directPayToDriver) {
+      throw new BadRequestException('This order is not using direct driver UPI payment');
+    }
+
+    if (payment.status === PaymentStatus.CAPTURED) {
+      return {
+        paymentId: payment.id,
+        status: payment.status,
+        provider: payment.provider,
+        providerRef: payment.providerRef,
+        confirmedBy: 'DRIVER',
+        alreadyCaptured: true
+      };
+    }
+
+    const driverRefSuffix = payload.providerReference?.trim()
+      ? payload.providerReference.trim()
+      : `driver_${payload.driverId.slice(0, 8)}_${Date.now()}`;
+
+    const updated = await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: PaymentStatus.CAPTURED,
+        providerRef: payment.providerRef
+          ? `${payment.providerRef}|${driverRefSuffix}`
+          : `upi_direct_${driverRefSuffix}`
+      }
+    });
+
+    return {
+      paymentId: updated.id,
+      status: updated.status,
+      provider: updated.provider,
+      providerRef: updated.providerRef,
+      confirmedBy: 'DRIVER',
+      settledAt: updated.updatedAt.toISOString()
     };
   }
 

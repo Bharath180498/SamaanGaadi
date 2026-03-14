@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   AvailabilityStatus,
   InsurancePlan,
+  KycVerificationStatus,
   OrderStatus,
   Prisma,
   SupportTicketStatus,
@@ -629,6 +630,10 @@ export class AdminService {
 
   pendingKycReview() {
     return this.kycService.pendingReview();
+  }
+
+  kycHistory(status: KycVerificationStatus, limit?: number) {
+    return this.kycService.history(status, limit);
   }
 
   kycReviewDetails(verificationId: string) {

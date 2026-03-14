@@ -36,13 +36,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: '#FFEDD5',
+    backgroundColor: '#DBEAFE',
     paddingHorizontal: spacing.sm,
     paddingVertical: 6
   },
   chipActive: {
     borderColor: colors.secondary,
-    backgroundColor: '#ECFDF5'
+    backgroundColor: '#EFF6FF'
   },
   text: {
     fontFamily: typography.bodyBold,

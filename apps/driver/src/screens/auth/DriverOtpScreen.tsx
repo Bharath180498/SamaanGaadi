@@ -30,7 +30,7 @@ export function DriverOtpScreen({ route }: Props) {
 
   const verify = async () => {
     if (code.trim().length < 4) {
-      Alert.alert('Enter OTP', 'Please enter the OTP code you received.');
+      Alert.alert(t('auth.enterOtpTitle'), t('auth.enterOtpBody'));
       return;
     }
 
@@ -41,16 +41,16 @@ export function DriverOtpScreen({ route }: Props) {
         name: route.params.name
       });
     } catch {
-      Alert.alert('Invalid OTP', error ?? 'Please check the OTP and retry.');
+      Alert.alert(t('auth.invalidOtpTitle'), error ?? t('auth.invalidOtpBody'));
     }
   };
 
   const resend = async () => {
     try {
       await requestOtp(route.params.phone, route.params.name);
-      Alert.alert('OTP Sent', 'A fresh OTP has been sent to your phone.');
+      Alert.alert(t('auth.otpSentTitle'), t('auth.otpSentBody'));
     } catch {
-      Alert.alert('Resend failed', error ?? 'Could not resend OTP right now.');
+      Alert.alert(t('auth.resendFailedTitle'), error ?? t('auth.resendFailedBody'));
     }
   };
 
@@ -63,19 +63,19 @@ export function DriverOtpScreen({ route }: Props) {
 
         <View style={styles.card}>
           <AnimatedTextField
-            label="Enter code"
+            label={t('auth.enterCode')}
             value={code}
             onChangeText={setCode}
             keyboardType="number-pad"
             maxLength={6}
-            placeholder="123456"
+            placeholder={t('auth.codePlaceholder')}
           />
 
           <Pressable style={styles.button} onPress={() => void verify()} disabled={loading}>
             {loading ? (
               <ActivityIndicator color={colors.white} />
             ) : (
-              <Text style={styles.buttonText}>Verify & Continue</Text>
+              <Text style={styles.buttonText}>{t('auth.verifyContinue')}</Text>
             )}
           </Pressable>
 
@@ -84,7 +84,7 @@ export function DriverOtpScreen({ route }: Props) {
           </Pressable>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
-          {lastOtpCode ? <Text style={styles.mockHint}>Demo OTP (mock mode): {lastOtpCode}</Text> : null}
+          {lastOtpCode ? <Text style={styles.mockHint}>{t('auth.mockOtpDemo', { code: lastOtpCode })}</Text> : null}
         </View>
       </View>
     </FormScreen>

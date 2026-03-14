@@ -14,6 +14,7 @@ import { colors, radius, spacing, typography } from '../../theme';
 import type { OnboardingStackParamList } from '../../types';
 import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { OnboardingCoachBanner } from '../../components/OnboardingCoachBanner';
+import { useDriverI18n } from '../../i18n/useDriverI18n';
 
 type Props = NativeStackScreenProps<OnboardingStackParamList, 'OnboardingDocuments'>;
 
@@ -23,7 +24,25 @@ function normalizeType(value: string) {
   return value.trim().toUpperCase();
 }
 
+function documentLabelKey(docType: string) {
+  const normalized = normalizeType(docType);
+  if (normalized === 'AADHAAR_FRONT') {
+    return 'onboarding.doc.aadhaar';
+  }
+  if (normalized === 'LICENSE_FRONT') {
+    return 'onboarding.doc.license';
+  }
+  if (normalized === 'RC_FRONT') {
+    return 'onboarding.doc.rc';
+  }
+  if (normalized === 'SELFIE') {
+    return 'onboarding.doc.selfie';
+  }
+  return docType.replace(/_/g, ' ');
+}
+
 export function OnboardingDocumentsScreen({ navigation }: Props) {
+  const { t } = useDriverI18n();
   const loading = useOnboardingStore((state) => state.loading);
   const load = useOnboardingStore((state) => state.load);
   const uploadDoc = useOnboardingStore((state) => state.uploadDoc);
@@ -58,19 +77,19 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
   const missingOnboardingFields = useMemo(
     () =>
       [
-        ['full name', fullName],
-        ['phone', phone],
-        ['vehicle type', vehicleType],
-        ['vehicle number', vehicleNumber],
-        ['license number', licenseNumber],
-        ['account holder', accountHolderName],
-        ['bank name', bankName],
-        ['account number', accountNumber],
-        ['IFSC code', ifscCode],
-        ['UPI ID', upiId]
+        ['onboarding.field.fullNameShort', fullName],
+        ['onboarding.field.phoneShort', phone],
+        ['onboarding.field.vehicleTypeShort', vehicleType],
+        ['onboarding.field.vehicleNumberShort', vehicleNumber],
+        ['onboarding.field.licenseNumberShort', licenseNumber],
+        ['onboarding.field.accountHolderShort', accountHolderName],
+        ['onboarding.field.bankNameShort', bankName],
+        ['onboarding.field.accountNumberShort', accountNumber],
+        ['onboarding.field.ifscShort', ifscCode],
+        ['onboarding.field.upiIdShort', upiId]
       ]
         .filter(([, value]) => !String(value ?? '').trim())
-        .map(([label]) => label),
+        .map(([key]) => t(key)),
     [
       accountHolderName,
       accountNumber,
@@ -79,6 +98,7 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
       ifscCode,
       licenseNumber,
       phone,
+      t,
       upiId,
       vehicleNumber,
       vehicleType
@@ -89,29 +109,33 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
     try {
       await uploadDoc(type);
     } catch {
-      Alert.alert('Upload failed', 'Could not upload document metadata. Retry.');
+      Alert.alert(t('onboarding.docs.uploadFailedTitle'), t('onboarding.docs.uploadFailedBody'));
     }
   };
 
   const submitForReview = async () => {
     if (!allUploaded) {
       Alert.alert(
-        'Upload remaining documents',
-        `Please upload: ${missingDocs.map((item) => item.replace(/_/g, ' ')).join(', ')}`
+        t('onboarding.docs.uploadRemainingTitle'),
+        t('onboarding.docs.uploadRemainingBody', {
+          items: missingDocs.map((item) => t(documentLabelKey(item))).join(', ')
+        })
       );
       return;
     }
 
     if (missingOnboardingFields.length > 0) {
       Alert.alert(
-        'Complete onboarding details',
-        `Missing: ${missingOnboardingFields.join(', ')}`
+        t('onboarding.docs.completeDetailsTitle'),
+        t('onboarding.docs.completeDetailsBody', {
+          items: missingOnboardingFields.join(', ')
+        })
       );
       return;
     }
 
     if (paymentMethods.length === 0) {
-      Alert.alert('Add QR payment', 'Upload at least one UPI QR in the payout step.');
+      Alert.alert(t('onboarding.docs.addUpiTitle'), t('onboarding.docs.addUpiBody'));
       return;
     }
 
@@ -121,10 +145,10 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
     } catch {
       const latestError = useOnboardingStore.getState().error;
       Alert.alert(
-        'Submit failed',
+        t('onboarding.docs.submitFailedTitle'),
         latestError ??
           error ??
-          'Please complete profile, vehicle, and payout details before submitting for review.'
+          t('onboarding.docs.submitFailedBody')
       );
     }
   };
@@ -133,8 +157,8 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
         <OnboardingCoachBanner step={4} total={5} tipKey="onboarding.help.docs" />
-        <Text style={styles.title}>Onboarding: Documents</Text>
-        <Text style={styles.subtitle}>Upload required KYC docs to submit verification.</Text>
+        <Text style={styles.title}>{t('onboarding.docs.title')}</Text>
+        <Text style={styles.subtitle}>{t('onboarding.docs.subtitle')}</Text>
 
         <View style={styles.card}>
           {requiredDocs.map((docType) => {
@@ -142,13 +166,15 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
             return (
               <View key={docType} style={styles.row}>
                 <View style={styles.rowText}>
-                  <Text style={styles.docTitle}>{docType.replace(/_/g, ' ')}</Text>
+                  <Text style={styles.docTitle}>{t(documentLabelKey(docType))}</Text>
                   <Text style={[styles.docState, isUploaded ? styles.docStateOk : styles.docStatePending]}>
-                    {isUploaded ? 'Uploaded' : 'Pending'}
+                    {isUploaded ? t('onboarding.docs.uploaded') : t('onboarding.docs.pending')}
                   </Text>
                 </View>
                 <Pressable style={styles.uploadButton} onPress={() => void upload(docType)} disabled={loading}>
-                  <Text style={styles.uploadButtonText}>{isUploaded ? 'Re-upload' : 'Upload'}</Text>
+                  <Text style={styles.uploadButtonText}>
+                    {isUploaded ? t('onboarding.docs.reupload') : t('onboarding.docs.upload')}
+                  </Text>
                 </Pressable>
               </View>
             );
@@ -156,21 +182,23 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
         </View>
 
         <Pressable style={[styles.submitButton, !allUploaded && styles.submitButtonDisabled]} onPress={() => void submitForReview()} disabled={loading}>
-          {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.submitButtonText}>Submit for KYC Review</Text>}
+          {loading ? <ActivityIndicator color={colors.white} /> : <Text style={styles.submitButtonText}>{t('onboarding.docs.submitReview')}</Text>}
         </Pressable>
 
         {!allUploaded ? (
           <Text style={styles.hint}>
-            Missing: {missingDocs.map((item) => item.replace(/_/g, ' ')).join(', ')}
+            {t('onboarding.docs.missingPrefix', {
+              items: missingDocs.map((item) => t(documentLabelKey(item))).join(', ')
+            })}
           </Text>
         ) : null}
         {missingOnboardingFields.length > 0 ? (
           <Text style={styles.hint}>
-            Complete before submit: {missingOnboardingFields.join(', ')}
+            {t('onboarding.docs.completePrefix', { items: missingOnboardingFields.join(', ') })}
           </Text>
         ) : null}
         {paymentMethods.length === 0 ? (
-          <Text style={styles.hint}>Upload at least one UPI QR in payout setup.</Text>
+          <Text style={styles.hint}>{t('onboarding.docs.addUpiHint')}</Text>
         ) : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </ScrollView>
@@ -196,10 +224,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#FDBA74',
+    borderColor: '#93C5FD',
     borderRadius: radius.sm,
     padding: spacing.sm,
-    backgroundColor: '#FFF7ED'
+    backgroundColor: '#F8FAFF'
   },
   rowText: {
     gap: 2,

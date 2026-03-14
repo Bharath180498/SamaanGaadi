@@ -19,6 +19,7 @@ import { useCustomerStore } from '../../store/useCustomerStore';
 import type { RootStackParamList } from '../../types/navigation';
 import MapView, { Marker, Polyline } from '../../components/maps';
 import { DeliverySignaturePreview } from '../../components/DeliverySignaturePreview';
+import { getCustomerPaymentStatusLabel, isCustomerPaymentPending } from './paymentState';
 import appConfig from '../../../app.json';
 
 interface DriverPoint {
@@ -117,6 +118,35 @@ function vehicleEmoji(vehicleType?: string) {
     return '🚚';
   }
   return '🚛';
+}
+
+function normalizeImageUrl(value: unknown) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  if (
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('file:') ||
+    /^https?:\/\//i.test(trimmed)
+  ) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('//')) {
+    return `https:${trimmed}`;
+  }
+
+  if (/^[\w.-]+\.[A-Za-z]{2,}(?:\/|$)/.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+
+  return trimmed;
 }
 
 async function fetchRouteDirect(input: {
@@ -260,6 +290,7 @@ export function CustomerTrackingScreen({ navigation }: Props) {
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [tipAmount, setTipAmount] = useState(0);
   const [summaryClosed, setSummaryClosed] = useState(false);
+  const [proofImageFailed, setProofImageFailed] = useState(false);
   const [clockNow, setClockNow] = useState(Date.now());
   const [routeCoordinates, setRouteCoordinates] = useState<RouteCoordinate[]>([]);
   const [driverDistanceKm, setDriverDistanceKm] = useState<number | undefined>();
@@ -407,14 +438,18 @@ export function CustomerTrackingScreen({ navigation }: Props) {
   const assignedDriverVehicle = assignedDriver?.vehicles?.[0];
   const deliveryProof = order?.trip?.deliveryProof;
   const proofReceiverName = typeof deliveryProof?.receiverName === 'string' ? deliveryProof.receiverName : '';
-  const proofPhotoUrl = typeof deliveryProof?.photoUrl === 'string' ? deliveryProof.photoUrl : '';
+  const proofPhotoUrl = normalizeImageUrl(deliveryProof?.photoUrl);
   const proofCapturedAt =
     typeof deliveryProof?.signatureCapturedAt === 'string'
       ? deliveryProof.signatureCapturedAt
       : typeof deliveryProof?.createdAt === 'string'
       ? deliveryProof.createdAt
       : undefined;
+  const showProofPhoto = Boolean(proofPhotoUrl) && !proofImageFailed;
   const hasDeliveryProof = Boolean(proofReceiverName || proofPhotoUrl || deliveryProof?.receiverSignature);
+  useEffect(() => {
+    setProofImageFailed(false);
+  }, [proofPhotoUrl]);
   const tripPreferredUpiId = order?.trip?.driverPreferredUpiId;
   const tripPreferredPaymentLabel = order?.trip?.driverPreferredPaymentLabel;
   const assignedDriverUpiId = tripPreferredUpiId ?? assignedDriver?.payoutAccount?.upiId;
@@ -462,22 +497,29 @@ export function CustomerTrackingScreen({ navigation }: Props) {
     () => TRIP_STAGES.findIndex((stage) => stage.key === (normalizedTripStatus ?? 'ASSIGNED')),
     [normalizedTripStatus]
   );
-  const paymentStatusDisplay =
-    order?.payment?.provider === 'WALLET' && order?.payment?.status === 'PENDING'
-      ? 'CASH ON DELIVERY'
-      : order?.payment?.status ?? 'PENDING';
-  const paymentStatusKey = String(order?.payment?.status ?? 'PENDING').toUpperCase();
-  const paymentPending = paymentStatusKey !== 'CAPTURED';
+  const paymentStatusDisplay = getCustomerPaymentStatusLabel({
+    orderStatus: order?.status,
+    payment: order?.payment
+  });
+  const paymentPending = isCustomerPaymentPending({
+    orderStatus: order?.status,
+    payment: order?.payment
+  });
+  const paymentDirectToDriver = Boolean(order?.payment?.directPayToDriver);
   const driverPaymentPreference = tripPreferredPaymentLabel ?? tripPreferredUpiId;
   const paymentSubtitle = [
     driverPaymentPreference ? `Driver prefers ${driverPaymentPreference}` : undefined,
-    order?.payment?.provider === 'WALLET' && order?.payment?.status === 'PENDING'
+    paymentPending && order?.payment?.provider === 'WALLET'
       ? 'Cash selected, to be collected at delivery'
-      : `${order?.payment?.status ?? 'Pending payment'} - tap to pay or change method`,
+      : paymentPending
+      ? `${paymentStatusDisplay} - tap to pay or change method`
+      : `${paymentStatusDisplay} - no action needed`,
     hasAssignedDriver
       ? 'UPI is available during or after the ride'
       : 'UPI unlocks once driver accepts your ride',
-    'Payments are held by QARGO and settled after delivery'
+    paymentDirectToDriver
+      ? 'Direct UPI mode: payment goes to driver UPI. Driver gets instant confirmation.'
+      : 'Digital payments are held by QARGO and settled after delivery'
   ]
     .filter(Boolean)
     .join(' • ');
@@ -857,7 +899,7 @@ export function CustomerTrackingScreen({ navigation }: Props) {
         <View style={styles.mapWrap}>
           <MapView style={styles.map} initialRegion={region}>
             <Marker coordinate={pickup} title="Pickup" />
-            <Marker coordinate={drop} title="Drop" pinColor="#F97316" />
+            <Marker coordinate={drop} title="Drop" pinColor="#2563EB" />
 
             {liveDriver ? (
               <Marker
@@ -882,7 +924,7 @@ export function CustomerTrackingScreen({ navigation }: Props) {
                   latitude: point.lat,
                   longitude: point.lng
                 }))}
-                strokeColor="#0F766E"
+                strokeColor="#1D4ED8"
                 strokeWidth={4}
               />
             ) : null}
@@ -1055,14 +1097,30 @@ export function CustomerTrackingScreen({ navigation }: Props) {
             {hasDeliveryProof ? (
               <View style={styles.proofCard}>
                 <Text style={styles.proofTitle}>Proof of delivery</Text>
-                <Text style={styles.proofMeta}>Receiver: {proofReceiverName || 'Captured'}</Text>
-                <Text style={styles.proofMeta}>
-                  Captured: {proofCapturedAt ? new Date(proofCapturedAt).toLocaleString() : 'N/A'}
-                </Text>
-                {proofPhotoUrl ? (
-                  <Image source={{ uri: proofPhotoUrl }} style={styles.proofImage} resizeMode="cover" />
-                ) : null}
-                <DeliverySignaturePreview signature={deliveryProof?.receiverSignature} height={96} />
+                <ScrollView
+                  style={styles.proofBodyScroll}
+                  contentContainerStyle={styles.proofBodyContent}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator={false}
+                >
+                  <Text style={styles.proofMeta}>Receiver: {proofReceiverName || 'Captured'}</Text>
+                  <Text style={styles.proofMeta}>
+                    Captured: {proofCapturedAt ? new Date(proofCapturedAt).toLocaleString() : 'N/A'}
+                  </Text>
+                  {showProofPhoto ? (
+                    <Image
+                      source={{ uri: proofPhotoUrl }}
+                      style={styles.proofImage}
+                      resizeMode="cover"
+                      onError={() => setProofImageFailed(true)}
+                    />
+                  ) : proofPhotoUrl ? (
+                    <Text style={styles.proofFallbackText}>
+                      Photo preview is unavailable for this trip. Pull to refresh and try again.
+                    </Text>
+                  ) : null}
+                  <DeliverySignaturePreview signature={deliveryProof?.receiverSignature} height={96} />
+                </ScrollView>
               </View>
             ) : null}
 
@@ -1087,83 +1145,105 @@ export function CustomerTrackingScreen({ navigation }: Props) {
       <Modal visible={showCompletionSheet} transparent animationType="slide" onRequestClose={finishTripSummary}>
         <View style={styles.summaryBackdrop}>
           <View style={styles.summarySheet}>
-            <View style={styles.summaryHandle} />
-            <Text style={styles.summaryTitle}>Trip completed</Text>
-            <Text style={styles.summarySub}>Review summary and tip your driver</Text>
+            <ScrollView
+              style={styles.summaryScroll}
+              contentContainerStyle={styles.summaryScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.summaryHandle} />
+              <Text style={styles.summaryTitle}>Trip completed</Text>
+              <Text style={styles.summarySub}>Review summary and tip your driver</Text>
 
-            <View style={styles.summaryStatsRow}>
-              <View style={styles.summaryStat}>
-                <Text style={styles.summaryStatLabel}>Final fare</Text>
-                <Text style={styles.summaryStatValue}>
-                  INR {Number(order?.finalPrice ?? order?.estimatedPrice ?? 0).toFixed(0)}
-                </Text>
-              </View>
-              <View style={styles.summaryStat}>
-                <Text style={styles.summaryStatLabel}>Waiting charge</Text>
-                <Text style={styles.summaryStatValue}>INR {Number(order?.waitingCharge ?? 0).toFixed(0)}</Text>
-              </View>
-              <View style={styles.summaryStat}>
-                <Text style={styles.summaryStatLabel}>Payment</Text>
-                <Text style={styles.summaryStatValue}>{paymentStatusDisplay}</Text>
-              </View>
-            </View>
-
-            {hasDeliveryProof ? (
-              <View style={styles.summaryProofCard}>
-                <Text style={styles.summarySectionTitle}>Proof of delivery</Text>
-                <Text style={styles.summaryProofMeta}>Receiver: {proofReceiverName || 'Captured'}</Text>
-                <Text style={styles.summaryProofMeta}>
-                  Captured: {proofCapturedAt ? new Date(proofCapturedAt).toLocaleString() : 'N/A'}
-                </Text>
-                {proofPhotoUrl ? (
-                  <Image source={{ uri: proofPhotoUrl }} style={styles.summaryProofImage} resizeMode="cover" />
-                ) : null}
-                <DeliverySignaturePreview signature={deliveryProof?.receiverSignature} height={88} />
-              </View>
-            ) : null}
-
-            <Text style={styles.summarySectionTitle}>Tip your driver</Text>
-            <View style={styles.tipRow}>
-              {[0, 20, 50, 100].map((amount) => (
-                <Pressable
-                  key={amount}
-                  style={[styles.tipChip, tipAmount === amount && styles.tipChipActive]}
-                  onPress={() => setTipAmount(amount)}
-                >
-                  <Text style={[styles.tipChipText, tipAmount === amount && styles.tipChipTextActive]}>
-                    {amount === 0 ? 'No tip' : `+INR ${amount}`}
+              <View style={styles.summaryStatsRow}>
+                <View style={styles.summaryStat}>
+                  <Text style={styles.summaryStatLabel}>Final fare</Text>
+                  <Text style={styles.summaryStatValue}>
+                    INR {Number(order?.finalPrice ?? order?.estimatedPrice ?? 0).toFixed(0)}
                   </Text>
-                </Pressable>
-              ))}
-            </View>
+                </View>
+                <View style={styles.summaryStat}>
+                  <Text style={styles.summaryStatLabel}>Waiting charge</Text>
+                  <Text style={styles.summaryStatValue}>INR {Number(order?.waitingCharge ?? 0).toFixed(0)}</Text>
+                </View>
+                <View style={styles.summaryStat}>
+                  <Text style={styles.summaryStatLabel}>Payment</Text>
+                  <Text style={styles.summaryStatValue}>{paymentStatusDisplay}</Text>
+                </View>
+              </View>
 
-            <Text style={styles.summarySectionTitle}>Rate driver</Text>
-            <View style={styles.ratingRow}>
-              {[1, 2, 3, 4, 5].map((value) => (
-                <Pressable
-                  key={value}
-                  style={[styles.ratingDot, rating >= value && styles.ratingDotActive]}
-                  onPress={() => setRating(value)}
-                  disabled={ratingSubmitted}
-                >
-                  <Text style={[styles.ratingDotText, rating >= value && styles.ratingDotTextActive]}>{value}</Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <View style={styles.summaryActions}>
-              {paymentPending ? (
-                <Pressable style={styles.summaryPayButton} onPress={() => navigation.navigate('CustomerPayment')}>
-                  <Text style={styles.summaryPayButtonText}>Pay now</Text>
-                </Pressable>
+              {hasDeliveryProof ? (
+                <View style={styles.summaryProofCard}>
+                  <Text style={styles.summarySectionTitle}>Proof of delivery</Text>
+                  <ScrollView
+                    style={styles.summaryProofBodyScroll}
+                    contentContainerStyle={styles.summaryProofBodyContent}
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <Text style={styles.summaryProofMeta}>Receiver: {proofReceiverName || 'Captured'}</Text>
+                    <Text style={styles.summaryProofMeta}>
+                      Captured: {proofCapturedAt ? new Date(proofCapturedAt).toLocaleString() : 'N/A'}
+                    </Text>
+                    {showProofPhoto ? (
+                      <Image
+                        source={{ uri: proofPhotoUrl }}
+                        style={styles.summaryProofImage}
+                        resizeMode="cover"
+                        onError={() => setProofImageFailed(true)}
+                      />
+                    ) : proofPhotoUrl ? (
+                      <Text style={styles.proofFallbackText}>
+                        Photo preview is unavailable for this trip. Pull to refresh and try again.
+                      </Text>
+                    ) : null}
+                    <DeliverySignaturePreview signature={deliveryProof?.receiverSignature} height={88} />
+                  </ScrollView>
+                </View>
               ) : null}
-              <Pressable style={styles.rateButton} onPress={() => void submitRating()} disabled={ratingSubmitted}>
-                <Text style={styles.rateButtonText}>{ratingSubmitted ? 'Rating submitted' : 'Submit rating'}</Text>
-              </Pressable>
-              <Pressable style={styles.summaryDoneButton} onPress={finishTripSummary}>
-                <Text style={styles.summaryDoneButtonText}>Done</Text>
-              </Pressable>
-            </View>
+
+              <Text style={styles.summarySectionTitle}>Tip your driver</Text>
+              <View style={styles.tipRow}>
+                {[0, 20, 50, 100].map((amount) => (
+                  <Pressable
+                    key={amount}
+                    style={[styles.tipChip, tipAmount === amount && styles.tipChipActive]}
+                    onPress={() => setTipAmount(amount)}
+                  >
+                    <Text style={[styles.tipChipText, tipAmount === amount && styles.tipChipTextActive]}>
+                      {amount === 0 ? 'No tip' : `+INR ${amount}`}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.summarySectionTitle}>Rate driver</Text>
+              <View style={styles.ratingRow}>
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <Pressable
+                    key={value}
+                    style={[styles.ratingDot, rating >= value && styles.ratingDotActive]}
+                    onPress={() => setRating(value)}
+                    disabled={ratingSubmitted}
+                  >
+                    <Text style={[styles.ratingDotText, rating >= value && styles.ratingDotTextActive]}>{value}</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <View style={styles.summaryActions}>
+                {paymentPending ? (
+                  <Pressable style={styles.summaryPayButton} onPress={() => navigation.navigate('CustomerPayment')}>
+                    <Text style={styles.summaryPayButtonText}>Pay now</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable style={styles.rateButton} onPress={() => void submitRating()} disabled={ratingSubmitted}>
+                  <Text style={styles.rateButtonText}>{ratingSubmitted ? 'Rating submitted' : 'Submit rating'}</Text>
+                </Pressable>
+                <Pressable style={styles.summaryDoneButton} onPress={finishTripSummary}>
+                  <Text style={styles.summaryDoneButtonText}>Done</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1174,12 +1254,12 @@ export function CustomerTrackingScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#FFF8F1',
+    backgroundColor: '#EFF6FF',
     overflow: 'hidden'
   },
   container: {
     flex: 1,
-    backgroundColor: '#FFF8F1',
+    backgroundColor: '#EFF6FF',
     overflow: 'hidden'
   },
   emptyWrap: {
@@ -1204,12 +1284,12 @@ const styles = StyleSheet.create({
   emptyButton: {
     marginTop: 4,
     borderRadius: 12,
-    backgroundColor: '#0F766E',
+    backgroundColor: '#1D4ED8',
     paddingHorizontal: 16,
     paddingVertical: 10
   },
   emptyButtonText: {
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     fontFamily: 'Manrope_700Bold',
     fontSize: 14
   },
@@ -1222,13 +1302,13 @@ const styles = StyleSheet.create({
   cancelledSecondary: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#0F766E',
+    borderColor: '#1D4ED8',
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     paddingVertical: 10
   },
   cancelledSecondaryText: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 14
   },
@@ -1327,12 +1407,12 @@ const styles = StyleSheet.create({
   },
   statusPill: {
     borderRadius: 999,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 10,
     paddingVertical: 5
   },
   statusPillText: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 11
   },
@@ -1364,7 +1444,7 @@ const styles = StyleSheet.create({
   },
   matchingFill: {
     height: '100%',
-    backgroundColor: '#0F766E'
+    backgroundColor: '#1D4ED8'
   },
   driverDistanceText: {
     color: '#1E3A8A',
@@ -1396,19 +1476,19 @@ const styles = StyleSheet.create({
   paymentAction: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#99F6E4',
-    backgroundColor: '#ECFEFF',
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
     paddingHorizontal: 12,
     paddingVertical: 9,
     gap: 2
   },
   paymentActionTitle: {
-    color: '#115E59',
+    color: '#1E3A8A',
     fontFamily: 'Manrope_700Bold',
     fontSize: 14
   },
   paymentActionSubtitle: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_500Medium',
     fontSize: 12
   },
@@ -1446,11 +1526,11 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   stageNodeDone: {
-    borderColor: '#0F766E',
-    backgroundColor: '#99F6E4'
+    borderColor: '#1D4ED8',
+    backgroundColor: '#BFDBFE'
   },
   stageNodeActive: {
-    backgroundColor: '#0F766E'
+    backgroundColor: '#1D4ED8'
   },
   stageLine: {
     width: 2,
@@ -1459,7 +1539,7 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   stageLineDone: {
-    backgroundColor: '#0F766E'
+    backgroundColor: '#1D4ED8'
   },
   stageLabel: {
     color: '#64748B',
@@ -1498,8 +1578,8 @@ const styles = StyleSheet.create({
   driverCard: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#D1FAE5',
-    backgroundColor: '#F0FDFA',
+    borderColor: '#DBEAFE',
+    backgroundColor: '#F8FAFF',
     padding: 10,
     gap: 10
   },
@@ -1512,12 +1592,12 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#CCFBF1',
+    backgroundColor: '#DBEAFE',
     alignItems: 'center',
     justifyContent: 'center'
   },
   driverAvatarText: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Sora_700Bold',
     fontSize: 16
   },
@@ -1530,19 +1610,19 @@ const styles = StyleSheet.create({
     fontSize: 14
   },
   driverMetaLine: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_500Medium',
     fontSize: 12,
     marginTop: 1
   },
   callButton: {
     borderRadius: 999,
-    backgroundColor: '#0F766E',
+    backgroundColor: '#1D4ED8',
     paddingHorizontal: 12,
     paddingVertical: 6
   },
   callButtonText: {
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
@@ -1556,7 +1636,7 @@ const styles = StyleSheet.create({
     width: '49%',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#CCFBF1',
+    borderColor: '#DBEAFE',
     backgroundColor: '#FFFFFF',
     padding: 8
   },
@@ -1593,7 +1673,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#FCD34D',
-    backgroundColor: '#FFFBEB',
+    backgroundColor: '#EFF6FF',
     padding: 10
   },
   ewayLabel: {
@@ -1610,13 +1690,19 @@ const styles = StyleSheet.create({
   proofCard: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
-    backgroundColor: '#ECFDF5',
+    borderColor: '#DBEAFE',
+    backgroundColor: '#EFF6FF',
     padding: 10,
     gap: 6
   },
+  proofBodyScroll: {
+    maxHeight: 312
+  },
+  proofBodyContent: {
+    gap: 6
+  },
   proofTitle: {
-    color: '#065F46',
+    color: '#1E40AF',
     fontFamily: 'Manrope_700Bold',
     fontSize: 13
   },
@@ -1630,8 +1716,13 @@ const styles = StyleSheet.create({
     height: 140,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#86EFAC',
-    backgroundColor: '#DCFCE7'
+    borderColor: '#93C5FD',
+    backgroundColor: '#DBEAFE'
+  },
+  proofFallbackText: {
+    color: '#B45309',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 12
   },
   timelineTitle: {
     color: '#0F172A',
@@ -1690,8 +1781,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF'
   },
   ratingDotActive: {
-    borderColor: '#0F766E',
-    backgroundColor: '#CCFBF1'
+    borderColor: '#1D4ED8',
+    backgroundColor: '#DBEAFE'
   },
   ratingDotText: {
     color: '#475569',
@@ -1699,18 +1790,18 @@ const styles = StyleSheet.create({
     fontSize: 12
   },
   ratingDotTextActive: {
-    color: '#0F766E'
+    color: '#1D4ED8'
   },
   rateButton: {
     flex: 1,
     borderRadius: 10,
-    backgroundColor: '#0F766E',
+    backgroundColor: '#1D4ED8',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10
   },
   rateButtonText: {
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     fontFamily: 'Manrope_700Bold',
     fontSize: 13
   },
@@ -1730,7 +1821,12 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     paddingHorizontal: 16,
     paddingTop: 10,
-    paddingBottom: 24,
+    paddingBottom: 24
+  },
+  summaryScroll: {
+    maxHeight: '92%'
+  },
+  summaryScrollContent: {
     gap: 10
   },
   summaryHandle: {
@@ -1784,8 +1880,14 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#BBF7D0',
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#F8FAFF',
     padding: 10,
+    gap: 6
+  },
+  summaryProofBodyScroll: {
+    maxHeight: 280
+  },
+  summaryProofBodyContent: {
     gap: 6
   },
   summaryProofMeta: {
@@ -1798,8 +1900,8 @@ const styles = StyleSheet.create({
     height: 130,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
-    backgroundColor: '#DCFCE7'
+    borderColor: '#DBEAFE',
+    backgroundColor: '#DBEAFE'
   },
   tipRow: {
     flexDirection: 'row',
@@ -1815,8 +1917,8 @@ const styles = StyleSheet.create({
     paddingVertical: 7
   },
   tipChipActive: {
-    borderColor: '#0F766E',
-    backgroundColor: '#CCFBF1'
+    borderColor: '#1D4ED8',
+    backgroundColor: '#DBEAFE'
   },
   tipChipText: {
     color: '#334155',
@@ -1824,7 +1926,7 @@ const styles = StyleSheet.create({
     fontSize: 12
   },
   tipChipTextActive: {
-    color: '#115E59'
+    color: '#1E3A8A'
   },
   summaryActions: {
     flexDirection: 'row',
@@ -1849,14 +1951,14 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#0F766E',
+    borderColor: '#1D4ED8',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
     backgroundColor: '#FFFFFF'
   },
   summaryDoneButtonText: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 13
   }

@@ -24,6 +24,42 @@ const actionMap: Array<{ status: string; endpoint: string; label: string }> = [
   { status: 'IN_TRANSIT', endpoint: 'complete', label: 'Complete Delivery' }
 ];
 
+async function photoUriToDataUrl(photoUri: string, fallbackMimeType: string) {
+  try {
+    const response = await fetch(photoUri);
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const blob = await response.blob();
+    const resolvedMimeType = (blob.type || fallbackMimeType || 'image/jpeg').trim() || 'image/jpeg';
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Could not read delivery photo'));
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          resolve(reader.result);
+          return;
+        }
+        reject(new Error('Could not encode delivery photo'));
+      };
+      reader.readAsDataURL(blob);
+    });
+
+    if (dataUrl.startsWith('data:')) {
+      return dataUrl;
+    }
+
+    const base64Payload = dataUrl.trim();
+    if (!base64Payload) {
+      return undefined;
+    }
+    return `data:${resolvedMimeType};base64,${base64Payload}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export function DriverDashboardScreen() {
   const {
     bootstrap,
@@ -151,6 +187,7 @@ export function DriverDashboardScreen() {
       const fileUrl = String(upload.data?.fileUrl ?? '');
       const fileKey = String(upload.data?.fileKey ?? '');
       const resolvedContentType = String(upload.data?.contentType ?? requestedContentType);
+      let deliveryPhotoUrl = fileUrl;
 
       if (!fileUrl || !fileKey) {
         throw new Error('Delivery proof upload metadata missing');
@@ -174,6 +211,11 @@ export function DriverDashboardScreen() {
         if (!putResponse.ok) {
           throw new Error('Could not upload delivery proof photo');
         }
+      } else if (uploadUrl.startsWith('mock://')) {
+        const inlineDataUrl = await photoUriToDataUrl(payload.photoUri, resolvedContentType);
+        if (inlineDataUrl) {
+          deliveryPhotoUrl = inlineDataUrl;
+        }
       }
 
       await api.post(`/trips/${currentJob.id}/complete`, {
@@ -183,7 +225,7 @@ export function DriverDashboardScreen() {
         receiverName: payload.receiverName,
         receiverSignature: payload.receiverSignature,
         deliveryPhotoFileKey: fileKey,
-        deliveryPhotoUrl: fileUrl,
+        deliveryPhotoUrl,
         deliveryPhotoMimeType: resolvedContentType
       });
 
@@ -343,19 +385,19 @@ const styles = StyleSheet.create({
     backgroundColor: colors.secondary
   },
   offlineButton: {
-    backgroundColor: '#FFEDD5',
+    backgroundColor: '#DBEAFE',
     borderWidth: 1,
-    borderColor: '#FDBA74'
+    borderColor: '#93C5FD'
   },
   toggleText: {
     color: colors.white,
     fontFamily: typography.bodyBold
   },
   earningsCard: {
-    backgroundColor: '#FFF1E7',
+    backgroundColor: '#EAF2FF',
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#FDBA74',
+    borderColor: '#93C5FD',
     padding: spacing.md,
     gap: 4
   },

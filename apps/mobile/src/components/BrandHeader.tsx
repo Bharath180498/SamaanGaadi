@@ -10,7 +10,7 @@ interface BrandHeaderProps {
 export function BrandHeader({ title, subtitle }: BrandHeaderProps) {
   return (
     <LinearGradient
-      colors={['#E76F00', '#F39C3D', '#0B6B5A']}
+      colors={['#1D4ED8', '#3B82F6', '#2563EB']}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.container}
@@ -36,7 +36,7 @@ const styles = StyleSheet.create({
   brand: {
     fontFamily: typography.bodyBold,
     fontSize: 11,
-    color: '#FED7AA',
+    color: '#BFDBFE',
     letterSpacing: 1.6
   },
   title: {
@@ -46,6 +46,6 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontFamily: typography.body,
-    color: '#FFF7ED'
+    color: '#F8FAFF'
   }
 });

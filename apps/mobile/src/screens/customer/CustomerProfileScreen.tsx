@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   RefreshControl,
   SafeAreaView,
@@ -10,10 +9,15 @@ import {
   Text,
   View
 } from 'react-native';
+import axios from 'axios';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import api from '../../services/api';
-import { isOngoingOrderStatus, useCustomerStore } from '../../store/useCustomerStore';
+import {
+  isOngoingOrderStatus,
+  type CustomerWalletMethod,
+  useCustomerStore
+} from '../../store/useCustomerStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import type { RootStackParamList } from '../../types/navigation';
 import { CustomerSideDrawer, type DrawerRoute } from '../../components/CustomerSideDrawer';
@@ -30,13 +34,20 @@ interface OrderSummaryRow {
   vehicleType?: string;
 }
 
-const PAYMENT_LABELS = {
+const FALLBACK_PAYMENT_LABELS = {
   VISA_5496: 'Visa ...5496',
   MASTERCARD_6802: 'Mastercard ...6802',
   UPI_SCAN_PAY: 'UPI Scan & Pay',
   DRIVER_UPI_DIRECT: 'Driver UPI',
   CASH: 'Cash on delivery'
 } as const;
+
+function walletMethodLabel(method: CustomerWalletMethod) {
+  if (method.type === 'UPI_ID') {
+    return method.upiId ?? method.label;
+  }
+  return method.label;
+}
 
 function formatInr(amount: number) {
   return `INR ${amount.toFixed(0)}`;
@@ -73,11 +84,35 @@ function formatMonthYear(date?: Date) {
   });
 }
 
+function isTimeoutOrTransientNetworkError(error: unknown) {
+  if (!axios.isAxiosError(error)) {
+    return false;
+  }
+
+  if (error.code === 'ECONNABORTED') {
+    return true;
+  }
+
+  const message = String(error.message ?? '').toLowerCase();
+  return (
+    message.includes('timeout') ||
+    message.includes('network error') ||
+    message.includes('request failed') ||
+    message.includes('socket hang up')
+  );
+}
+
+async function waitMs(durationMs: number) {
+  await new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
 export function CustomerProfileScreen({ navigation }: Props) {
   const user = useSessionStore((state) => state.user);
   const activeOrderId = useCustomerStore((state) => state.activeOrderId);
   const activeOrderStatus = useCustomerStore((state) => state.activeOrderStatus);
   const paymentMethod = useCustomerStore((state) => state.paymentMethod);
+  const walletMethods = useCustomerStore((state) => state.walletMethods);
+  const defaultWalletMethodId = useCustomerStore((state) => state.defaultWalletMethodId);
   const insuranceSelected = useCustomerStore((state) => state.insuranceSelected);
   const minDriverRating = useCustomerStore((state) => state.minDriverRating);
   const goodsValue = useCustomerStore((state) => state.goodsValue);
@@ -88,6 +123,17 @@ export function CustomerProfileScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [drawerVisible, setDrawerVisible] = useState(false);
+
+  const defaultWalletMethod = useMemo(
+    () =>
+      walletMethods.find((method) => method.id === defaultWalletMethodId) ??
+      walletMethods.find((method) => method.isDefault) ??
+      walletMethods[0],
+    [defaultWalletMethodId, walletMethods]
+  );
+  const preferredPaymentLabel = defaultWalletMethod
+    ? walletMethodLabel(defaultWalletMethod)
+    : FALLBACK_PAYMENT_LABELS[paymentMethod];
 
   const loadStats = useCallback(
     async (isRefresh = false) => {
@@ -103,13 +149,32 @@ export function CustomerProfileScreen({ navigation }: Props) {
       setError(undefined);
 
       try {
-        const response = await api.get('/orders', {
-          params: {
-            customerId: user.id
-          }
-        });
+        let response:
+          | {
+              data: unknown;
+            }
+          | undefined;
 
-        setOrders(Array.isArray(response.data) ? (response.data as OrderSummaryRow[]) : []);
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            response = await api.get('/orders', {
+              params: {
+                customerId: user.id
+              },
+              timeout: 20000
+            });
+            break;
+          } catch (requestError: unknown) {
+            const isLastAttempt = attempt === 1;
+            if (!isLastAttempt && isTimeoutOrTransientNetworkError(requestError)) {
+              await waitMs(700);
+              continue;
+            }
+            throw requestError;
+          }
+        }
+
+        setOrders(Array.isArray(response?.data) ? (response?.data as OrderSummaryRow[]) : []);
       } catch (nextError: unknown) {
         const message =
           typeof nextError === 'object' &&
@@ -203,17 +268,6 @@ export function CustomerProfileScreen({ navigation }: Props) {
     navigation.navigate(route);
   };
 
-  const callSupport = async () => {
-    Alert.alert(
-      'Message support first',
-      'Please message us first in Support Center. We aim to resolve within 6 hours. If unresolved in 24 hours, call support to escalate.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Open Support Center', onPress: () => navigation.navigate('CustomerSupport') }
-      ]
-    );
-  };
-
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
@@ -234,7 +288,7 @@ export function CustomerProfileScreen({ navigation }: Props) {
               onRefresh={() => {
                 void loadStats(true);
               }}
-              tintColor="#0F766E"
+              tintColor="#1D4ED8"
             />
           }
           showsVerticalScrollIndicator={false}
@@ -244,7 +298,7 @@ export function CustomerProfileScreen({ navigation }: Props) {
           directionalLockEnabled
         >
           <LinearGradient
-            colors={['#0F172A', '#0F766E', '#0EA5A4']}
+            colors={['#0F172A', '#1D4ED8', '#0EA5A4']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.heroCard}
@@ -276,7 +330,7 @@ export function CustomerProfileScreen({ navigation }: Props) {
 
           {loading ? (
             <View style={styles.loadingCard}>
-              <ActivityIndicator color="#0F766E" />
+              <ActivityIndicator color="#1D4ED8" />
               <Text style={styles.loadingText}>Loading profile insights...</Text>
             </View>
           ) : null}
@@ -329,7 +383,7 @@ export function CustomerProfileScreen({ navigation }: Props) {
               <Pressable style={styles.quickCard} onPress={() => navigation.navigate('CustomerPayment')}>
                 <Text style={styles.quickCardEyebrow}>PAYMENTS</Text>
                 <Text style={styles.quickCardTitle}>Manage payment methods</Text>
-                <Text style={styles.quickCardMeta}>{PAYMENT_LABELS[paymentMethod]}</Text>
+                <Text style={styles.quickCardMeta}>{preferredPaymentLabel}</Text>
               </Pressable>
 
               <Pressable style={styles.quickCard} onPress={() => navigation.navigate('CustomerRides')}>
@@ -363,7 +417,7 @@ export function CustomerProfileScreen({ navigation }: Props) {
             <Text style={styles.actionsTitle}>Preferences Snapshot</Text>
             <View style={styles.preferenceRow}>
               <Text style={styles.preferenceLabel}>Preferred payment</Text>
-              <Text style={styles.preferenceValue}>{PAYMENT_LABELS[paymentMethod]}</Text>
+              <Text style={styles.preferenceValue}>{preferredPaymentLabel}</Text>
             </View>
             <View style={styles.preferenceRow}>
               <Text style={styles.preferenceLabel}>Insurance plan</Text>
@@ -386,18 +440,12 @@ export function CustomerProfileScreen({ navigation }: Props) {
           <View style={styles.supportCard}>
             <Text style={styles.actionsTitle}>Need Help?</Text>
             <Text style={styles.supportSubtitle}>
-              Message support first. We aim to resolve in 6 hours. If unresolved in 24 hours, escalate by call.
+              Please text support first and wait up to 6 hours. Phone escalation is intentionally hidden and unlocks
+              only for unresolved tickets.
             </Text>
 
-            <Pressable style={styles.supportButton} onPress={() => void callSupport()}>
-              <Text style={styles.supportButtonText}>Call after 24h unresolved</Text>
-            </Pressable>
-
-            <Pressable
-              style={[styles.supportButton, styles.supportButtonGhost]}
-              onPress={() => navigation.navigate('CustomerSupport')}
-            >
-              <Text style={styles.supportButtonGhostText}>Open support center</Text>
+            <Pressable style={styles.supportButton} onPress={() => navigation.navigate('CustomerSupport')}>
+              <Text style={styles.supportButtonText}>Open support center</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -416,7 +464,7 @@ export function CustomerProfileScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FFF8F1' },
+  safe: { flex: 1, backgroundColor: '#EFF6FF' },
   container: {
     flex: 1,
     alignItems: 'center',
@@ -479,7 +527,7 @@ const styles = StyleSheet.create({
     width: 58,
     height: 58,
     borderRadius: 29,
-    backgroundColor: '#F97316',
+    backgroundColor: '#2563EB',
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.4)',
     alignItems: 'center',
@@ -496,7 +544,7 @@ const styles = StyleSheet.create({
     gap: 6
   },
   heroBadge: {
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     backgroundColor: 'rgba(15, 23, 42, 0.35)',
     borderWidth: 1,
     borderColor: 'rgba(236, 254, 255, 0.35)',
@@ -512,7 +560,7 @@ const styles = StyleSheet.create({
   heroEyebrow: {
     fontFamily: 'Manrope_700Bold',
     fontSize: 11,
-    color: '#CCFBF1',
+    color: '#DBEAFE',
     letterSpacing: 0.9
   },
   name: {
@@ -537,7 +585,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between'
   },
   activeTripLabel: {
-    color: '#CCFBF1',
+    color: '#DBEAFE',
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
@@ -549,8 +597,8 @@ const styles = StyleSheet.create({
   loadingCard: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
-    backgroundColor: '#ECFDF5',
+    borderColor: '#DBEAFE',
+    backgroundColor: '#EFF6FF',
     paddingVertical: 10,
     paddingHorizontal: 12,
     flexDirection: 'row',
@@ -558,7 +606,7 @@ const styles = StyleSheet.create({
     gap: 8
   },
   loadingText: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
@@ -590,12 +638,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#EFF6FF'
   },
   metricTrust: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#ECFDF5'
+    borderColor: '#DBEAFE',
+    backgroundColor: '#EFF6FF'
   },
   metricRisk: {
-    borderColor: '#FED7AA',
-    backgroundColor: '#FFF7ED'
+    borderColor: '#BFDBFE',
+    backgroundColor: '#F8FAFF'
   },
   metricValueDark: {
     fontFamily: 'Sora_700Bold',
@@ -619,12 +667,12 @@ const styles = StyleSheet.create({
   },
   metricValueTeal: {
     fontFamily: 'Sora_700Bold',
-    color: '#065F46',
+    color: '#1E40AF',
     fontSize: 16
   },
   metricLabelTeal: {
     fontFamily: 'Manrope_700Bold',
-    color: '#047857',
+    color: '#2563EB',
     fontSize: 12
   },
   metricValueOrange: {
@@ -634,7 +682,7 @@ const styles = StyleSheet.create({
   },
   metricLabelOrange: {
     fontFamily: 'Manrope_700Bold',
-    color: '#C2410C',
+    color: '#1E3A8A',
     fontSize: 12
   },
   storyCard: {
@@ -709,7 +757,7 @@ const styles = StyleSheet.create({
     opacity: 0.55
   },
   quickCardEyebrow: {
-    color: '#0F766E',
+    color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 10,
     letterSpacing: 0.7
@@ -769,14 +817,4 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_700Bold',
     fontSize: 13
   },
-  supportButtonGhost: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE'
-  },
-  supportButtonGhostText: {
-    color: '#1D4ED8',
-    fontFamily: 'Manrope_700Bold',
-    fontSize: 13
-  }
 });

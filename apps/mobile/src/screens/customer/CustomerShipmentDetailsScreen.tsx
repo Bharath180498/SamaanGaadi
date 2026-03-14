@@ -160,7 +160,7 @@ export function CustomerShipmentDetailsScreen({ navigation }: Props) {
           <View style={styles.block}>
             <View style={styles.blockHeadingRow}>
               <Text style={styles.blockTitle}>Insurance Coverage</Text>
-              {insuranceLoading ? <ActivityIndicator size="small" color="#0F766E" /> : null}
+              {insuranceLoading ? <ActivityIndicator size="small" color="#1D4ED8" /> : null}
             </View>
 
             <View style={styles.insuranceGrid}>
@@ -217,11 +217,11 @@ export function CustomerShipmentDetailsScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#FFF8F1'
+    backgroundColor: '#EFF6FF'
   },
   container: {
     flex: 1,
-    backgroundColor: '#FFF8F1',
+    backgroundColor: '#EFF6FF',
     width: '100%',
     maxWidth: 460,
     alignSelf: 'center',
@@ -260,8 +260,8 @@ const styles = StyleSheet.create({
   heroCard: {
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#FDBA74',
-    backgroundColor: '#FFF7ED',
+    borderColor: '#93C5FD',
+    backgroundColor: '#F8FAFF',
     padding: 14
   },
   heroTitle: {
@@ -330,8 +330,8 @@ const styles = StyleSheet.create({
     padding: 10
   },
   insuranceCardActive: {
-    borderColor: '#0F766E',
-    backgroundColor: '#ECFDF5'
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF'
   },
   insurancePlan: {
     fontFamily: 'Manrope_700Bold',
@@ -339,7 +339,7 @@ const styles = StyleSheet.create({
     fontSize: 13
   },
   insurancePlanActive: {
-    color: '#065F46'
+    color: '#1E40AF'
   },
   insuranceText: {
     fontFamily: 'Manrope_500Medium',
@@ -354,7 +354,7 @@ const styles = StyleSheet.create({
   },
   applyButton: {
     borderRadius: 14,
-    backgroundColor: '#0F766E',
+    backgroundColor: '#1D4ED8',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 12,
@@ -362,7 +362,7 @@ const styles = StyleSheet.create({
   },
   applyText: {
     fontFamily: 'Sora_700Bold',
-    color: '#ECFEFF',
+    color: '#EFF6FF',
     fontSize: 16
   }
 });

@@ -59,6 +59,24 @@ export class DriversService implements OnModuleInit {
     return this.redisService.getClient();
   }
 
+  private parseMoney(value: unknown) {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 0;
+    }
+    return parsed;
+  }
+
+  private estimateDriverPayoutInr(order: {
+    finalPrice?: unknown;
+    estimatedPrice?: unknown;
+    waitingCharge?: unknown;
+  }) {
+    const fare = this.parseMoney(order.finalPrice ?? order.estimatedPrice);
+    const waitingCharge = this.parseMoney(order.waitingCharge);
+    return Number((fare + waitingCharge).toFixed(2));
+  }
+
   async onModuleInit() {
     await this.rebuildGeoIndexes();
   }
@@ -306,7 +324,11 @@ export class DriversService implements OnModuleInit {
         }
       },
       include: {
-        order: true
+        order: {
+          include: {
+            payment: true
+          }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -332,11 +354,17 @@ export class DriversService implements OnModuleInit {
       orderBy: { createdAt: 'desc' }
     });
 
+    const pendingOffersWithPayout = pendingOffers.map((offer) => ({
+      ...offer,
+      estimatedDriverPayoutInr: this.estimateDriverPayoutInr(offer.order),
+      currency: 'INR'
+    }));
+
     return {
       availabilityStatus: driver.availabilityStatus,
       currentJob: currentTrip,
       nextJob: nextOrder,
-      pendingOffers
+      pendingOffers: pendingOffersWithPayout
     };
   }
 
@@ -650,7 +678,7 @@ export class DriversService implements OnModuleInit {
             ? 'Enterprise plan billing is managed by sales contracts.'
             : `Monthly subscription fee: INR ${monthlyFee ?? 0}.`
       },
-      recentTrips: completedTrips.slice(0, 20).map((trip) => ({
+      recentTrips: completedTrips.map((trip) => ({
         tripId: trip.id,
         orderId: trip.orderId,
         deliveredAt: trip.deliveryTime,

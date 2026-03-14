@@ -140,7 +140,7 @@ function normalizePaymentMethods(input: unknown): DriverPaymentMethod[] {
 
       return {
         id,
-        type: (typeof candidate.type === 'string' ? candidate.type : 'UPI_QR') as 'UPI_QR' | 'UPI_VPA',
+        type: (typeof candidate.type === 'string' ? candidate.type : 'UPI_VPA') as 'UPI_QR' | 'UPI_VPA',
         label: typeof candidate.label === 'string' && candidate.label.trim() ? candidate.label.trim() : undefined,
         upiId,
         qrImageUrl:
