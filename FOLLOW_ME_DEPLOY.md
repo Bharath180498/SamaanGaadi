@@ -1,138 +1,99 @@
-# Follow-Me Deploy Guide (Railway)
+# RunMe (Railway + Local)
 
-This is the simple version for this repo.
+Minimal copy-paste commands for this repo.
 
-## 1. One-Time Setup
+## 0. One-time setup
 
-1. Install CLI and login:
-   ```bash
-   npm i -g @railway/cli
-   railway login
-   ```
-
-2. In Railway dashboard, create one project with services:
-   - `backend`
-   - `Postgres`
-   - `Redis`
-   - `admin` (optional for now)
-
-3. Backend service settings:
-   - Keep source root at repo root
-   - Config-as-Code path: `/apps/backend/railway.json`
-   - If Railway still uses Railpack, set:
-     - Build Command: `npm run build:backend`
-     - Start Command: `npm run start:backend:migrate`
-
-4. Admin service settings (if using admin):
-   - Config-as-Code path: `/apps/admin/railway.json`
-
-5. Link local folder to Railway project:
-   ```bash
-   cd /Users/bharath/Desktop/Porter
-   railway link --project <YOUR_PROJECT_ID>
-   ```
-
-6. Set service variables:
-   - If your service names are exactly `backend`, `Postgres`, `Redis`:
-     ```bash
-     npm run railway:configure-vars -- --skip-admin
-     ```
-   - If names are different:
-     ```bash
-     npm run railway:configure-vars -- \
-       --backend-service <backend-name> \
-       --postgres-service <postgres-name> \
-       --redis-service <redis-name> \
-       --skip-admin
-     ```
-
-## 2. First Backend Deploy
-
-Option A: Deploy local code immediately
 ```bash
+npm i -g @railway/cli
+railway login
+cd /Users/bharath/Desktop/Porter
+railway link --project <YOUR_PROJECT_ID>
+```
+
+Required Railway services:
+- `backend`
+- `Postgres`
+- `Redis`
+- `admin` (optional)
+
+## 1. Configure vars + deploy backend
+
+Use the repo setup script:
+
+```bash
+npm run railway:setup
+```
+
+If service names differ from defaults, use:
+
+```bash
+npm run railway:configure-vars -- \
+  --backend-service <backend-name> \
+  --postgres-service <postgres-name> \
+  --redis-service <redis-name> \
+  --skip-admin
+
+railway up --service <backend-name> --detach
+```
+
+## 2. Prisma migration to Railway DB
+
+Run this from local machine whenever `schema.prisma` / migrations changed:
+
+```bash
+DATABASE_URL="$(railway variables --service Postgres --json | jq -r '.DATABASE_PUBLIC_URL')" \
+npm run prisma:migrate --workspace @porter/backend
+```
+
+If it prints `No pending migrations to apply`, you are already up to date.
+
+## 3. Daily backend deploy flow
+
+```bash
+# 1) migrate (safe to run)
+DATABASE_URL="$(railway variables --service Postgres --json | jq -r '.DATABASE_PUBLIC_URL')" \
+npm run prisma:migrate --workspace @porter/backend
+
+# 2) deploy backend
 railway up --service backend --detach
 ```
 
-Option B: Deploy from GitHub commit
+## 4. Start apps locally
+
 ```bash
-git add .
-git commit -m "deploy prep"
-git push origin main
-```
-Then redeploy from Railway dashboard.
+# backend local
+npm run dev:backend
 
-## 3. Get Backend Domain
+# admin local (point to Railway backend)
+NEXT_PUBLIC_API_URL=https://<backend-public-domain>/api npm run dev:admin
 
-In Railway dashboard:
-- backend service -> Settings -> Networking -> Public Networking -> Generate Domain
+# customer app
+npm run dev:mobile
 
-Use this URL in mobile app:
-- `apps/mobile/app.json` -> `expo.extra.apiBaseUrl`
-- Example:
-  ```json
-  "apiBaseUrl": "https://your-backend.up.railway.app/api"
-  ```
-
-Restart Expo after editing:
-```bash
-npm run dev:mobile:fresh
+# driver app
+npm run dev:driver
 ```
 
-## 4. Every Time You Make Changes
+## 5. Quick checks
 
-### Backend changes
-1. Push code:
-   ```bash
-   git add .
-   git commit -m "backend updates"
-   git push origin main
-   ```
-2. Deploy backend:
-   - Auto-deploy (if enabled), or
-   - `railway up --service backend --detach`
-
-### Admin changes
-1. Push code
-2. Deploy:
-   ```bash
-   railway up --service admin --detach
-   ```
-
-### Mobile-only changes
-- No Railway deploy needed.
-- Just restart Expo:
-  ```bash
-  npm run dev:mobile:fresh
-  ```
-
-## 5. Health Checks
-
-Backend:
 ```bash
-curl https://<backend-domain>/api/health
+railway service status --all
+curl https://<backend-public-domain>/api/health
 ```
 
-If mobile says API unreachable:
-- confirm `app.json` has correct `https://.../api`
-- restart Expo (`npm run dev:mobile:fresh`)
-- ensure backend health URL works in phone browser
+## 6. Common fixes
 
-## 6. Common Errors and Fixes
+`P1001 postgres.railway.internal`
+- Cause: local machine cannot access Railway private DB host.
+- Fix: run migration with `DATABASE_PUBLIC_URL` command in section 2.
 
-`Service 'backend' not found`
-- Your service name is different.
-- Run:
+`invalid passcode` in admin login
+- `ADMIN_PASSCODE` on backend service does not match what you type.
+- Re-run `npm run railway:setup` after updating `.env.railway.setup.sh`.
+
+`service not found`
+- Check real names:
   ```bash
   railway service status --all
   ```
-- Re-run vars script with real names.
-
-`No start command was found` (Railpack)
-- backend service is not using correct config/commands.
-- Set:
-  - Build Command: `npm run build:backend`
-  - Start Command: `npm run start:backend:migrate`
-
-`Missing script: build:backend`
-- Railway is building old code from GitHub.
-- Push latest code first, then redeploy.

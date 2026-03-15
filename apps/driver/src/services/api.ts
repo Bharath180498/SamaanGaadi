@@ -80,7 +80,7 @@ export function maskPhone(phone: string) {
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 12000
+  timeout: 30000
 });
 
 export function setAuthToken(token?: string) {

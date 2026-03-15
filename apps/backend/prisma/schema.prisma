@@ -597,6 +597,7 @@ model DriverOnboarding {
   vehicleType       VehicleType?
   vehicleNumber     String?
   licenseNumber     String?
+  dateOfBirth       String?
   aadhaarNumber     String?
   rcNumber          String?
   accountHolderName String?

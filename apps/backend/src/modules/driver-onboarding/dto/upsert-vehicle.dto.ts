@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { VehicleType } from '@prisma/client';
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
 
 export class UpsertDriverVehicleDto {
   @ApiProperty({ example: 'user-id' })
@@ -19,14 +19,8 @@ export class UpsertDriverVehicleDto {
   @IsString()
   licenseNumber!: string;
 
-  @ApiProperty({ required: false, example: '123412341234' })
+  @ApiProperty({ required: false, example: '1998-06-15' })
   @IsOptional()
-  @IsString()
-  aadhaarNumber?: string;
-
-  @ApiProperty({ required: false, example: 'KA01RC1234' })
-  @IsOptional()
-  @IsString()
-  rcNumber?: string;
+  @IsDateString()
+  dateOfBirth?: string;
 }
-

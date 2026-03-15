@@ -71,6 +71,6 @@ See [ROADMAP.md](./ROADMAP.md).
 - Backend feature flags:
   - `AUTH_MODE=otp|mock`
   - `ROUTE_PROVIDER=google|mock`
-  - `KYC_PROVIDER=mock|idfy|cashfree|quickekyc`
+  - `KYC_PROVIDER=mock|idfy|cashfree|surepass`
   - `PUSH_PROVIDER=fcm|mock`
 - Production integrations should supply real API credentials and webhook handlers.

@@ -293,16 +293,21 @@ export class AuthService {
     const authSession = await this.issueSession({ id: user.id, role: user.role });
 
     if (user.role === UserRole.DRIVER) {
+      const normalizedName = user.name.trim();
+      const shouldSeedFullName =
+        normalizedName.length > 0 &&
+        !/^(driver|customer|admin)\s+user$/i.test(normalizedName);
+
       await this.prisma.driverOnboarding.upsert({
         where: { userId: user.id },
         update: {
           phone: user.phone,
-          fullName: user.name
+          ...(shouldSeedFullName ? { fullName: user.name } : {})
         },
         create: {
           userId: user.id,
           phone: user.phone,
-          fullName: user.name
+          ...(shouldSeedFullName ? { fullName: user.name } : {})
         }
       });
     }

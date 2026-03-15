@@ -398,13 +398,18 @@ export class DriverOnboardingService {
     await this.ensureUser(payload.userId);
     const onboarding = await this.ensureOnboarding(payload.userId);
 
+    if (payload.fullName?.trim()) {
+      await this.prisma.user.update({
+        where: { id: payload.userId },
+        data: { name: payload.fullName.trim() }
+      });
+    }
+
     return this.prisma.driverOnboarding.update({
       where: { id: onboarding.id },
       data: {
         fullName: payload.fullName ?? onboarding.fullName,
         phone: payload.phone ?? onboarding.phone,
-        email: payload.email ?? onboarding.email,
-        city: payload.city ?? onboarding.city,
         status:
           onboarding.status === OnboardingStatus.NOT_STARTED
             ? OnboardingStatus.IN_PROGRESS
@@ -416,15 +421,27 @@ export class DriverOnboardingService {
   async upsertVehicle(payload: UpsertDriverVehicleDto) {
     await this.ensureUser(payload.userId);
     const onboarding = await this.ensureOnboarding(payload.userId);
+    const kycProvider = (this.configService.get<string>('kycProvider') ?? 'mock').trim().toLowerCase();
+    const normalizedVehicleNumber = payload.vehicleNumber.trim().toUpperCase();
+    const normalizedLicenseNumber = payload.licenseNumber.trim().toUpperCase();
+    const normalizedDateOfBirth =
+      typeof payload.dateOfBirth === 'string' && payload.dateOfBirth.trim().length > 0
+        ? payload.dateOfBirth.trim()
+        : onboarding.dateOfBirth;
+    const requiresDateOfBirth = ['surepass', 'cashfree'].includes(kycProvider);
+
+    if (requiresDateOfBirth && !normalizedDateOfBirth) {
+      throw new BadRequestException('Date of birth is required for driving license verification');
+    }
 
     return this.prisma.driverOnboarding.update({
       where: { id: onboarding.id },
       data: {
         vehicleType: payload.vehicleType,
-        vehicleNumber: payload.vehicleNumber,
-        licenseNumber: payload.licenseNumber,
-        aadhaarNumber: payload.aadhaarNumber ?? onboarding.aadhaarNumber,
-        rcNumber: payload.rcNumber ?? onboarding.rcNumber,
+        vehicleNumber: normalizedVehicleNumber,
+        licenseNumber: normalizedLicenseNumber,
+        dateOfBirth: normalizedDateOfBirth,
+        rcNumber: normalizedVehicleNumber,
         status: OnboardingStatus.IN_PROGRESS
       }
     });
@@ -505,34 +522,21 @@ export class DriverOnboardingService {
 
   async submit(userId: string) {
     const onboarding = await this.ensureOnboarding(userId);
+    const kycProvider = (this.configService.get<string>('kycProvider') ?? 'mock').trim().toLowerCase();
+    const requiresDateOfBirth = ['surepass', 'cashfree'].includes(kycProvider);
     const missingFields = [
       ['fullName', onboarding.fullName],
       ['phone', onboarding.phone],
       ['vehicleType', onboarding.vehicleType],
       ['vehicleNumber', onboarding.vehicleNumber],
       ['licenseNumber', onboarding.licenseNumber],
-      ['accountHolderName', onboarding.accountHolderName],
-      ['bankName', onboarding.bankName],
-      ['accountNumber', onboarding.accountNumber],
-      ['ifscCode', onboarding.ifscCode],
-      ['upiId', onboarding.upiId]
+      ...(requiresDateOfBirth ? ([['dateOfBirth', onboarding.dateOfBirth]] as const) : [])
     ]
       .filter(([, value]) => !value)
       .map(([field]) => field);
 
     if (missingFields.length > 0) {
       throw new BadRequestException(`Missing onboarding fields: ${missingFields.join(', ')}`);
-    }
-
-    const activePaymentMethods = await this.prisma.driverPaymentMethod.count({
-      where: {
-        userId,
-        isActive: true
-      }
-    });
-
-    if (activePaymentMethods === 0) {
-      throw new BadRequestException('Add at least one UPI payment method before submitting onboarding');
     }
 
     return this.prisma.driverOnboarding.update({
@@ -560,8 +564,7 @@ export class DriverOnboardingService {
     if (
       updated.vehicleType &&
       updated.vehicleNumber &&
-      updated.licenseNumber &&
-      updated.aadhaarNumber
+      updated.licenseNumber
     ) {
       const driverProfile = await this.prisma.driverProfile.upsert({
         where: { userId },
@@ -569,7 +572,6 @@ export class DriverOnboardingService {
           vehicleType: updated.vehicleType,
           vehicleNumber: updated.vehicleNumber,
           licenseNumber: updated.licenseNumber,
-          aadhaarNumber: updated.aadhaarNumber,
           verificationStatus: VerificationStatus.APPROVED
         },
         create: {
@@ -577,7 +579,6 @@ export class DriverOnboardingService {
           vehicleType: updated.vehicleType,
           vehicleNumber: updated.vehicleNumber,
           licenseNumber: updated.licenseNumber,
-          aadhaarNumber: updated.aadhaarNumber,
           verificationStatus: VerificationStatus.APPROVED
         }
       });

@@ -37,8 +37,7 @@ export function DriverOtpScreen({ route }: Props) {
     try {
       await verifyOtp({
         phone: route.params.phone,
-        code: code.trim(),
-        name: route.params.name
+        code: code.trim()
       });
     } catch {
       Alert.alert(t('auth.invalidOtpTitle'), error ?? t('auth.invalidOtpBody'));
@@ -47,7 +46,7 @@ export function DriverOtpScreen({ route }: Props) {
 
   const resend = async () => {
     try {
-      await requestOtp(route.params.phone, route.params.name);
+      await requestOtp(route.params.phone);
       Alert.alert(t('auth.otpSentTitle'), t('auth.otpSentBody'));
     } catch {
       Alert.alert(t('auth.resendFailedTitle'), error ?? t('auth.resendFailedBody'));

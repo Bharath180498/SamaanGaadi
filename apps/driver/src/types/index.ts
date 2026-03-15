@@ -1,6 +1,6 @@
 export type AuthStackParamList = {
   DriverPhone: undefined;
-  DriverOtp: { phone: string; role: 'DRIVER'; name?: string };
+  DriverOtp: { phone: string; role: 'DRIVER' };
 };
 
 export type OnboardingStackParamList = {

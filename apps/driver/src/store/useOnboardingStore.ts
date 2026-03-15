@@ -19,11 +19,18 @@ interface OnboardingState {
   phone: string;
   email: string;
   city: string;
+  verifiedFullName: string;
+  verifiedDateOfBirth: string;
+  verifiedAddress: string;
+  verifiedCity: string;
+  verifiedVehicleModel: string;
+  verifiedVehicleCategory: string;
+  verifiedLicenseClasses: string[];
+  verifiedProfileImageDataUrl: string;
   vehicleType: VehicleType;
   vehicleNumber: string;
   licenseNumber: string;
-  aadhaarNumber: string;
-  rcNumber: string;
+  dateOfBirth: string;
   accountHolderName: string;
   bankName: string;
   accountNumber: string;
@@ -34,8 +41,8 @@ interface OnboardingState {
   loading: boolean;
   error?: string;
   load: () => Promise<void>;
-  updateProfile: (payload: Partial<Pick<OnboardingState, 'fullName' | 'phone' | 'email' | 'city'>>) => Promise<void>;
-  updateVehicle: (payload: Partial<Pick<OnboardingState, 'vehicleType' | 'vehicleNumber' | 'licenseNumber' | 'aadhaarNumber' | 'rcNumber'>>) => Promise<void>;
+  updateProfile: (payload: Partial<Pick<OnboardingState, 'fullName' | 'phone'>>) => Promise<void>;
+  updateVehicle: (payload: Partial<Pick<OnboardingState, 'vehicleType' | 'vehicleNumber' | 'licenseNumber' | 'dateOfBirth'>>) => Promise<void>;
   updateBank: (payload: Partial<Pick<OnboardingState, 'accountHolderName' | 'bankName' | 'accountNumber' | 'ifscCode' | 'upiId'>>) => Promise<void>;
   uploadDoc: (type: string) => Promise<void>;
   uploadPaymentMethodQr: (payload: {
@@ -61,11 +68,18 @@ const defaultState = {
   phone: '',
   email: '',
   city: '',
+  verifiedFullName: '',
+  verifiedDateOfBirth: '',
+  verifiedAddress: '',
+  verifiedCity: '',
+  verifiedVehicleModel: '',
+  verifiedVehicleCategory: '',
+  verifiedLicenseClasses: [] as string[],
+  verifiedProfileImageDataUrl: '',
   vehicleType: 'MINI_TRUCK' as VehicleType,
   vehicleNumber: '',
   licenseNumber: '',
-  aadhaarNumber: '',
-  rcNumber: '',
+  dateOfBirth: '',
   accountHolderName: '',
   bankName: '',
   accountNumber: '',
@@ -88,6 +102,14 @@ function extractErrorMessage(error: unknown, fallback: string) {
     return fallback;
   }
 
+  if (
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string' &&
+    (error as { code: string }).code === 'ECONNABORTED'
+  ) {
+    return 'Request timed out. Network or KYC provider may be slow, please retry.';
+  }
+
   if ('response' in error) {
     const response = (error as { response?: { data?: unknown } }).response;
     const data = response?.data;
@@ -97,6 +119,18 @@ function extractErrorMessage(error: unknown, fallback: string) {
     }
 
     if (typeof data === 'object' && data !== null) {
+      if ('errors' in data && typeof (data as { errors?: unknown }).errors === 'object') {
+        const errors = (data as { errors?: Record<string, unknown> }).errors;
+        if (errors && !Array.isArray(errors)) {
+          const flattened = Object.values(errors)
+            .map((value) => String(value ?? '').trim())
+            .filter((value) => Boolean(value));
+          if (flattened.length > 0) {
+            return flattened.join(', ');
+          }
+        }
+      }
+
       if ('message' in data) {
         const message = (data as { message?: unknown }).message;
         if (Array.isArray(message)) {
@@ -162,6 +196,87 @@ function buildFileNameFromUri(uri: string, fallbackExtension = 'jpg') {
   return raw.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function pickString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value !== 'string') {
+      continue;
+    }
+    const normalized = value.trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return '';
+}
+
+function normalizeImageDataUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.startsWith('data:')) {
+    return trimmed;
+  }
+  return `data:image/jpeg;base64,${trimmed}`;
+}
+
+function extractVerificationSnapshot(input: unknown) {
+  const statusPayload = asRecord(input);
+  const latestVerification = asRecord(statusPayload?.latestVerification);
+  const providerResponse = asRecord(latestVerification?.providerResponse);
+  const qargoMeta = asRecord(providerResponse?._qargo);
+  const profileSummary = asRecord(qargoMeta?.profileSummary);
+
+  const checks = Array.isArray(providerResponse?.checks) ? providerResponse.checks : [];
+  const dlCheck = checks.find((entry) => asRecord(entry)?.name === 'driving_license');
+  const rcCheck = checks.find((entry) => asRecord(entry)?.name === 'rc');
+
+  const dlPayload = asRecord(asRecord(dlCheck)?.payload);
+  const rcPayload = asRecord(asRecord(rcCheck)?.payload);
+  const dlData = asRecord(dlPayload?.data);
+  const rcData = asRecord(rcPayload?.data);
+
+  const licenseClasses = Array.isArray(dlData?.vehicle_classes)
+    ? dlData.vehicle_classes
+        .map((entry) => pickString(entry))
+        .filter((entry) => Boolean(entry))
+    : Array.isArray(profileSummary?.licenseClasses)
+      ? profileSummary.licenseClasses
+          .map((entry) => pickString(entry))
+          .filter((entry) => Boolean(entry))
+      : [];
+
+  const profileImageRaw = pickString(dlData?.profile_image);
+
+  return {
+    verifiedFullName: pickString(profileSummary?.fullName, dlData?.name, rcData?.owner_name),
+    verifiedDateOfBirth: pickString(profileSummary?.dateOfBirth, dlData?.dob),
+    verifiedAddress: pickString(
+      profileSummary?.address,
+      dlData?.permanent_address,
+      dlData?.temporary_address,
+      rcData?.present_address,
+      rcData?.permanent_address
+    ),
+    verifiedCity: pickString(profileSummary?.city),
+    verifiedVehicleModel: pickString(profileSummary?.vehicleModel, rcData?.maker_model),
+    verifiedVehicleCategory: pickString(
+      profileSummary?.vehicleCategory,
+      rcData?.vehicle_category_description,
+      rcData?.vehicle_category
+    ),
+    verifiedLicenseClasses: licenseClasses,
+    verifiedProfileImageDataUrl: profileImageRaw ? normalizeImageDataUrl(profileImageRaw) : ''
+  };
+}
+
 export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   ...defaultState,
   loading: false,
@@ -177,6 +292,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
 
       const onboarding = onboardingResponse.data as Record<string, unknown>;
       const docs = (kycResponse.data?.documents ?? []) as Array<{ type: string }>;
+      const verificationSnapshot = extractVerificationSnapshot(kycResponse.data);
 
       set({
         loading: false,
@@ -185,11 +301,18 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
         phone: String(onboarding.phone ?? ''),
         email: String(onboarding.email ?? ''),
         city: String(onboarding.city ?? ''),
+        verifiedFullName: verificationSnapshot.verifiedFullName,
+        verifiedDateOfBirth: verificationSnapshot.verifiedDateOfBirth,
+        verifiedAddress: verificationSnapshot.verifiedAddress,
+        verifiedCity: verificationSnapshot.verifiedCity,
+        verifiedVehicleModel: verificationSnapshot.verifiedVehicleModel,
+        verifiedVehicleCategory: verificationSnapshot.verifiedVehicleCategory,
+        verifiedLicenseClasses: verificationSnapshot.verifiedLicenseClasses,
+        verifiedProfileImageDataUrl: verificationSnapshot.verifiedProfileImageDataUrl,
         vehicleType: (String(onboarding.vehicleType ?? 'MINI_TRUCK') as VehicleType),
         vehicleNumber: String(onboarding.vehicleNumber ?? ''),
         licenseNumber: String(onboarding.licenseNumber ?? ''),
-        aadhaarNumber: String(onboarding.aadhaarNumber ?? ''),
-        rcNumber: String(onboarding.rcNumber ?? ''),
+        dateOfBirth: String(onboarding.dateOfBirth ?? ''),
         accountHolderName: String(onboarding.accountHolderName ?? ''),
         bankName: String(onboarding.bankName ?? ''),
         accountNumber: String(onboarding.accountNumber ?? ''),
@@ -219,9 +342,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       await api.post('/driver-onboarding/profile', {
         userId,
         fullName: next.fullName,
-        phone: next.phone,
-        email: next.email,
-        city: next.city
+        phone: next.phone
       });
 
       set({ ...payload, loading: false, error: undefined });
@@ -236,6 +357,8 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   async updateVehicle(payload) {
     const userId = currentUserId();
     const next = { ...get(), ...payload };
+    const normalizedDateOfBirth =
+      typeof next.dateOfBirth === 'string' ? next.dateOfBirth.trim() : '';
 
     set({ loading: true, error: undefined });
 
@@ -245,11 +368,60 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
         vehicleType: next.vehicleType,
         vehicleNumber: next.vehicleNumber,
         licenseNumber: next.licenseNumber,
-        aadhaarNumber: next.aadhaarNumber,
-        rcNumber: next.rcNumber
+        dateOfBirth: normalizedDateOfBirth
       });
 
-      set({ ...payload, loading: false, error: undefined });
+      let verificationStatus = '';
+      let verificationMessage: string | undefined;
+
+      try {
+        const verification = await api.post(
+          '/kyc/verify/provider',
+          { userId },
+          { timeout: 90000 }
+        );
+
+        verificationStatus = String(verification.data?.status ?? '').toUpperCase();
+        const riskSignals = Array.isArray(verification.data?.riskSignals)
+          ? verification.data.riskSignals
+              .map((signal: unknown) => String(signal ?? '').trim())
+              .filter((signal: string) => Boolean(signal))
+          : [];
+
+        if (verificationStatus && verificationStatus !== 'VERIFIED') {
+          verificationMessage =
+            riskSignals[0] ??
+            'Verification is still in progress. Please retry in a minute if approval is not visible.';
+        }
+      } catch (verificationError: unknown) {
+        verificationMessage = extractErrorMessage(
+          verificationError,
+          'Vehicle details were saved, but verification timed out. Please retry in a moment.'
+        );
+      }
+
+      try {
+        await useDriverSessionStore.getState().refreshOnboardingStatus();
+      } catch (refreshError: unknown) {
+        verificationMessage =
+          verificationMessage ??
+          extractErrorMessage(
+            refreshError,
+            'Vehicle details were saved. Approval status is taking longer to refresh.'
+          );
+      }
+
+      const onboardingStatus = useDriverSessionStore.getState().onboardingStatus;
+      if (onboardingStatus === 'APPROVED') {
+        set({ ...payload, loading: false, error: undefined });
+        return;
+      }
+
+      if (!verificationMessage && verificationStatus === 'VERIFIED') {
+        verificationMessage = 'Verification completed. Approval is syncing, please wait a few seconds.';
+      }
+
+      set({ ...payload, loading: false, error: verificationMessage });
     } catch (error: unknown) {
       set({
         loading: false,

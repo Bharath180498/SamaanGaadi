@@ -21,10 +21,13 @@ CASHFREE_API_VERSION_INPUT="${CASHFREE_API_VERSION:-2023-08-01}"
 CASHFREE_PAYMENTS_API_URL_INPUT="${CASHFREE_PAYMENTS_API_URL:-https://api.cashfree.com/pg/orders}"
 CASHFREE_WEBHOOK_SECRET_INPUT="${CASHFREE_WEBHOOK_SECRET:-}"
 CASHFREE_PAYMENT_RETURN_URL_INPUT="${CASHFREE_PAYMENT_RETURN_URL:-}"
-QUICKEKYC_API_URL_INPUT="${QUICKEKYC_API_URL:-https://api.quickekyc.com/api/v1}"
-QUICKEKYC_API_KEY_INPUT="${QUICKEKYC_API_KEY:-}"
-QUICKEKYC_API_KEY_HEADER_INPUT="${QUICKEKYC_API_KEY_HEADER:-x-api-key}"
-QUICKEKYC_USE_AUTHORIZATION_HEADER_INPUT="${QUICKEKYC_USE_AUTHORIZATION_HEADER:-false}"
+SUREPASS_API_URL_INPUT="${SUREPASS_API_URL:-https://kyc-api.surepass.io}"
+SUREPASS_API_KEY_INPUT="${SUREPASS_API_KEY:-}"
+SUREPASS_API_KEY_HEADER_INPUT="${SUREPASS_API_KEY_HEADER:-x-api-key}"
+SUREPASS_STATIC_BEARER_TOKEN_INPUT="${SUREPASS_STATIC_BEARER_TOKEN:-}"
+SUREPASS_DRIVING_LICENSE_PATH_INPUT="${SUREPASS_DRIVING_LICENSE_PATH:-/api/v1/driving-license/driving-license}"
+SUREPASS_RC_PATH_INPUT="${SUREPASS_RC_PATH:-/api/v1/rc/rc-v2}"
+SUREPASS_RC_CHALLAN_PATH_INPUT="${SUREPASS_RC_CHALLAN_PATH:-}"
 FCM_SERVER_KEY_INPUT="${FCM_SERVER_KEY:-}"
 TWILIO_ACCOUNT_SID_INPUT="${TWILIO_ACCOUNT_SID:-}"
 TWILIO_AUTH_TOKEN_INPUT="${TWILIO_AUTH_TOKEN:-}"
@@ -69,7 +72,7 @@ Usage:
     [--postgres-service Postgres] \
     [--redis-service Redis] \
     [--route-provider mock|google] \
-    [--kyc-provider mock|idfy|cashfree|quickekyc] \
+    [--kyc-provider mock|idfy|cashfree|surepass] \
     [--push-provider mock|expo|fcm] \
     [--otp-provider mock|twilio] \
     [--google-maps-api-key your-key] \
@@ -83,10 +86,13 @@ Usage:
     [--cashfree-payments-api-url https://api.cashfree.com/pg/orders] \
     [--cashfree-webhook-secret your-webhook-secret] \
     [--cashfree-payment-return-url https://your-app.example/payment-return] \
-    [--quickekyc-api-url https://api.quickekyc.com/api/v1] \
-    [--quickekyc-api-key your-key] \
-    [--quickekyc-api-key-header x-api-key] \
-    [--quickekyc-use-authorization-header true|false] \
+    [--surepass-api-url https://kyc-api.surepass.io] \
+    [--surepass-api-key your-key] \
+    [--surepass-api-key-header x-api-key] \
+    [--surepass-static-bearer-token your-token] \
+    [--surepass-driving-license-path /api/v1/driving-license/driving-license] \
+    [--surepass-rc-path /api/v1/rc/rc-v2] \
+    [--surepass-rc-challan-path /api/v1/vehicle-rc-challan-advanced] \
     [--fcm-server-key your-key] \
     [--twilio-account-sid ACxxxx] \
     [--twilio-auth-token xxxx] \
@@ -267,20 +273,32 @@ while [[ $# -gt 0 ]]; do
       CASHFREE_PAYMENT_RETURN_URL_INPUT="$2"
       shift 2
       ;;
-    --quickekyc-api-url)
-      QUICKEKYC_API_URL_INPUT="$2"
+    --surepass-api-url)
+      SUREPASS_API_URL_INPUT="$2"
       shift 2
       ;;
-    --quickekyc-api-key)
-      QUICKEKYC_API_KEY_INPUT="$2"
+    --surepass-api-key)
+      SUREPASS_API_KEY_INPUT="$2"
       shift 2
       ;;
-    --quickekyc-api-key-header)
-      QUICKEKYC_API_KEY_HEADER_INPUT="$2"
+    --surepass-api-key-header)
+      SUREPASS_API_KEY_HEADER_INPUT="$2"
       shift 2
       ;;
-    --quickekyc-use-authorization-header)
-      QUICKEKYC_USE_AUTHORIZATION_HEADER_INPUT="$2"
+    --surepass-static-bearer-token)
+      SUREPASS_STATIC_BEARER_TOKEN_INPUT="$2"
+      shift 2
+      ;;
+    --surepass-driving-license-path)
+      SUREPASS_DRIVING_LICENSE_PATH_INPUT="$2"
+      shift 2
+      ;;
+    --surepass-rc-path)
+      SUREPASS_RC_PATH_INPUT="$2"
+      shift 2
+      ;;
+    --surepass-rc-challan-path)
+      SUREPASS_RC_CHALLAN_PATH_INPUT="$2"
       shift 2
       ;;
     --fcm-server-key)
@@ -472,7 +490,7 @@ set_var_if_real() {
 }
 
 validate_choice "ROUTE_PROVIDER" "$ROUTE_PROVIDER_VALUE" "mock" "google"
-validate_choice "KYC_PROVIDER" "$KYC_PROVIDER_VALUE" "mock" "idfy" "cashfree" "quickekyc"
+validate_choice "KYC_PROVIDER" "$KYC_PROVIDER_VALUE" "mock" "idfy" "cashfree" "surepass"
 validate_choice "PUSH_PROVIDER" "$PUSH_PROVIDER_VALUE" "mock" "expo" "fcm"
 validate_choice "OTP_PROVIDER" "$OTP_PROVIDER_VALUE" "mock" "twilio"
 validate_choice "SUPPORT_TRANSLATION_ENABLED" "$SUPPORT_TRANSLATION_ENABLED_INPUT" "true" "false"
@@ -494,8 +512,22 @@ if [[ "$KYC_PROVIDER_VALUE" == "cashfree" ]]; then
   require_real_value "CASHFREE_KYC_API_URL" "$CASHFREE_KYC_API_URL_INPUT"
 fi
 
-if [[ "$KYC_PROVIDER_VALUE" == "quickekyc" ]]; then
-  require_real_value "QUICKEKYC_API_KEY" "$QUICKEKYC_API_KEY_INPUT"
+if [[ "$KYC_PROVIDER_VALUE" == "surepass" ]]; then
+  require_real_value "SUREPASS_API_URL" "$SUREPASS_API_URL_INPUT"
+  if is_placeholder "$SUREPASS_STATIC_BEARER_TOKEN_INPUT" &&
+    is_placeholder "$SUREPASS_API_KEY_INPUT"; then
+    echo "For KYC_PROVIDER=surepass, provide one auth mode:" >&2
+    echo "  1) SUREPASS_STATIC_BEARER_TOKEN, or" >&2
+    echo "  2) SUREPASS_API_KEY" >&2
+    exit 1
+  fi
+
+  if is_placeholder "$SUREPASS_STATIC_BEARER_TOKEN_INPUT" &&
+    [[ "$SUREPASS_API_KEY_INPUT" =~ ^eyJ[[:alnum:]_-]+\.[[:alnum:]_-]+\.[[:alnum:]_-]+$ ]]; then
+    echo "Detected JWT-like Surepass token in SUREPASS_API_KEY. Using it as SUREPASS_STATIC_BEARER_TOKEN."
+    SUREPASS_STATIC_BEARER_TOKEN_INPUT="$SUREPASS_API_KEY_INPUT"
+    SUREPASS_API_KEY_INPUT=""
+  fi
 fi
 
 if [[ "$PUSH_PROVIDER_VALUE" == "fcm" ]]; then
@@ -588,10 +620,13 @@ set_var "$BACKEND_SERVICE" "CASHFREE_API_VERSION=$CASHFREE_API_VERSION_INPUT"
 set_var "$BACKEND_SERVICE" "CASHFREE_PAYMENTS_API_URL=$CASHFREE_PAYMENTS_API_URL_INPUT"
 set_var_if_real "$BACKEND_SERVICE" "CASHFREE_WEBHOOK_SECRET" "$CASHFREE_WEBHOOK_SECRET_INPUT"
 set_var_if_real "$BACKEND_SERVICE" "CASHFREE_PAYMENT_RETURN_URL" "$CASHFREE_PAYMENT_RETURN_URL_INPUT"
-set_var_if_real "$BACKEND_SERVICE" "QUICKEKYC_API_URL" "$QUICKEKYC_API_URL_INPUT"
-set_var_if_real "$BACKEND_SERVICE" "QUICKEKYC_API_KEY" "$QUICKEKYC_API_KEY_INPUT"
-set_var "$BACKEND_SERVICE" "QUICKEKYC_API_KEY_HEADER=$QUICKEKYC_API_KEY_HEADER_INPUT"
-set_var "$BACKEND_SERVICE" "QUICKEKYC_USE_AUTHORIZATION_HEADER=$QUICKEKYC_USE_AUTHORIZATION_HEADER_INPUT"
+set_var "$BACKEND_SERVICE" "SUREPASS_API_URL=$SUREPASS_API_URL_INPUT"
+set_var_if_real "$BACKEND_SERVICE" "SUREPASS_API_KEY" "$SUREPASS_API_KEY_INPUT"
+set_var "$BACKEND_SERVICE" "SUREPASS_API_KEY_HEADER=$SUREPASS_API_KEY_HEADER_INPUT"
+set_var_if_real "$BACKEND_SERVICE" "SUREPASS_STATIC_BEARER_TOKEN" "$SUREPASS_STATIC_BEARER_TOKEN_INPUT"
+set_var "$BACKEND_SERVICE" "SUREPASS_DRIVING_LICENSE_PATH=$SUREPASS_DRIVING_LICENSE_PATH_INPUT"
+set_var "$BACKEND_SERVICE" "SUREPASS_RC_PATH=$SUREPASS_RC_PATH_INPUT"
+set_var_if_real "$BACKEND_SERVICE" "SUREPASS_RC_CHALLAN_PATH" "$SUREPASS_RC_CHALLAN_PATH_INPUT"
 set_var_if_real "$BACKEND_SERVICE" "FCM_SERVER_KEY" "$FCM_SERVER_KEY_INPUT"
 set_var_if_real "$BACKEND_SERVICE" "TWILIO_ACCOUNT_SID" "$TWILIO_ACCOUNT_SID_INPUT"
 set_var_if_real "$BACKEND_SERVICE" "TWILIO_AUTH_TOKEN" "$TWILIO_AUTH_TOKEN_INPUT"

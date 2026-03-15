@@ -7,7 +7,6 @@ import {
 } from './kyc-verification.provider';
 
 const REQUIRED_DOCS: KycDocType[] = [
-  KycDocType.AADHAAR_FRONT,
   KycDocType.LICENSE_FRONT,
   KycDocType.RC_FRONT,
   KycDocType.SELFIE
@@ -42,4 +41,3 @@ export class MockIdfyProvider implements KycVerificationProvider {
     };
   }
 }
-

@@ -38,12 +38,22 @@ export function ProfileScreen() {
   const accountHolderName = useOnboardingStore((state) => state.accountHolderName);
   const paymentMethods = useOnboardingStore((state) => state.paymentMethods);
   const onboardingError = useOnboardingStore((state) => state.error);
+  const verifiedFullName = useOnboardingStore((state) => state.verifiedFullName);
+  const verifiedDateOfBirth = useOnboardingStore((state) => state.verifiedDateOfBirth);
+  const verifiedAddress = useOnboardingStore((state) => state.verifiedAddress);
+  const verifiedCity = useOnboardingStore((state) => state.verifiedCity);
+  const verifiedVehicleModel = useOnboardingStore((state) => state.verifiedVehicleModel);
+  const verifiedVehicleCategory = useOnboardingStore((state) => state.verifiedVehicleCategory);
+  const verifiedLicenseClasses = useOnboardingStore((state) => state.verifiedLicenseClasses);
+  const verifiedProfileImageDataUrl = useOnboardingStore((state) => state.verifiedProfileImageDataUrl);
   const simpleMode = useDriverUxStore((state) => state.simpleMode);
   const setSimpleMode = useDriverUxStore((state) => state.setSimpleMode);
   const voiceGuidanceEnabled = useDriverUxStore((state) => state.voiceGuidanceEnabled);
   const setVoiceGuidanceEnabled = useDriverUxStore((state) => state.setVoiceGuidanceEnabled);
   const guidedHintsEnabled = useDriverUxStore((state) => state.guidedHintsEnabled);
   const setGuidedHintsEnabled = useDriverUxStore((state) => state.setGuidedHintsEnabled);
+  const hasCompletedFirstTour = useDriverUxStore((state) => state.hasCompletedFirstTour);
+  const requestTourReplay = useDriverUxStore((state) => state.requestTourReplay);
 
   const [newUpiId, setNewUpiId] = useState('');
   const [newMethodLabel, setNewMethodLabel] = useState('');
@@ -71,6 +81,16 @@ export function ProfileScreen() {
       (user?.name ?? accountHolderName)?.trim() || 'Qargo Driver',
     [accountHolderName, user?.name]
   );
+  const hasVerifiedSnapshot = Boolean(
+    verifiedFullName ||
+      verifiedDateOfBirth ||
+      verifiedAddress ||
+      verifiedVehicleModel ||
+      verifiedVehicleCategory ||
+      verifiedProfileImageDataUrl
+  );
+  const verifiedClassesText = verifiedLicenseClasses.join(', ');
+  const displayName = verifiedFullName || user?.name || '—';
 
   const addAnotherUpiId = async () => {
     const normalizedNewUpi = normalizeUpiId(newUpiId);
@@ -149,9 +169,53 @@ export function ProfileScreen() {
 
         <View style={styles.card}>
           <Text style={styles.fieldLabel}>{t('profile.field.name')}</Text>
-          <Text style={styles.fieldValue}>{user?.name ?? '—'}</Text>
+          <Text style={styles.fieldValue}>{displayName}</Text>
           <Text style={styles.fieldLabel}>{t('profile.field.phone')}</Text>
           <Text style={styles.fieldValue}>{user?.phone ?? '—'}</Text>
+          {hasVerifiedSnapshot ? (
+            <>
+              <Text style={styles.helperText}>{t('profile.verified.subtitle')}</Text>
+              {verifiedProfileImageDataUrl ? (
+                <Image source={{ uri: verifiedProfileImageDataUrl }} style={styles.verifiedAvatar} />
+              ) : null}
+              {verifiedDateOfBirth ? (
+                <>
+                  <Text style={styles.fieldLabel}>{t('profile.verified.dob')}</Text>
+                  <Text style={styles.fieldValue}>{verifiedDateOfBirth}</Text>
+                </>
+              ) : null}
+              {verifiedAddress ? (
+                <>
+                  <Text style={styles.fieldLabel}>{t('profile.verified.address')}</Text>
+                  <Text style={styles.fieldValue}>{verifiedAddress}</Text>
+                </>
+              ) : null}
+              {verifiedCity ? (
+                <>
+                  <Text style={styles.fieldLabel}>{t('profile.verified.city')}</Text>
+                  <Text style={styles.fieldValue}>{verifiedCity}</Text>
+                </>
+              ) : null}
+              {verifiedVehicleModel ? (
+                <>
+                  <Text style={styles.fieldLabel}>{t('profile.verified.vehicleModel')}</Text>
+                  <Text style={styles.fieldValue}>{verifiedVehicleModel}</Text>
+                </>
+              ) : null}
+              {verifiedVehicleCategory ? (
+                <>
+                  <Text style={styles.fieldLabel}>{t('profile.verified.vehicleCategory')}</Text>
+                  <Text style={styles.fieldValue}>{verifiedVehicleCategory}</Text>
+                </>
+              ) : null}
+              {verifiedClassesText ? (
+                <>
+                  <Text style={styles.fieldLabel}>{t('profile.verified.licenseClasses')}</Text>
+                  <Text style={styles.fieldValue}>{verifiedClassesText}</Text>
+                </>
+              ) : null}
+            </>
+          ) : null}
           <Text style={styles.fieldLabel}>{t('profile.field.driverProfileId')}</Text>
           <Text style={styles.fieldValue}>{driverProfileId ?? t('common.na')}</Text>
           <Text style={styles.fieldLabel}>{t('profile.field.onboardingStatus')}</Text>
@@ -325,6 +389,22 @@ export function ProfileScreen() {
           </View>
         </View>
 
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>{t('profile.help.title')}</Text>
+          <Text style={styles.helperText}>
+            {hasCompletedFirstTour ? t('profile.help.replayHint') : t('profile.help.firstRunHint')}
+          </Text>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => {
+              requestTourReplay();
+              Alert.alert(t('profile.help.replayTitle'), t('profile.help.replayBody'));
+            }}
+          >
+            <Text style={styles.secondaryText}>{t('profile.help.replayAction')}</Text>
+          </Pressable>
+        </View>
+
         <Pressable
           style={styles.secondaryButton}
           onPress={() => void Promise.all([refreshOnboardingStatus(), bootstrap(), loadOnboarding()])}
@@ -371,6 +451,15 @@ const styles = StyleSheet.create({
   fieldLabel: { fontFamily: typography.bodyBold, color: colors.mutedText, fontSize: 12 },
   fieldValue: { fontFamily: typography.body, color: colors.accent },
   status: { color: colors.secondary, fontFamily: typography.bodyBold },
+  verifiedAvatar: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    borderWidth: 2,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#F8FAFC',
+    marginBottom: spacing.xs
+  },
   input: {
     borderWidth: 1,
     borderColor: colors.border,

@@ -42,6 +42,7 @@ function LoadingScreen() {
 
 export default function App() {
   const loadingSession = useSessionStore((state) => state.loading);
+  const hydrated = useSessionStore((state) => state.hydrated);
   const token = useSessionStore((state) => state.token);
   const user = useSessionStore((state) => state.user);
   const bootstrapCustomerSession = useSessionStore((state) => state.bootstrapCustomerSession);
@@ -50,8 +51,11 @@ export default function App() {
   const [manropeLoaded] = useManropeFonts({ Manrope_500Medium, Manrope_700Bold });
 
   useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
     void bootstrapCustomerSession();
-  }, [bootstrapCustomerSession]);
+  }, [bootstrapCustomerSession, hydrated]);
 
   useEffect(() => {
     if (!token || !user?.id) {
@@ -65,7 +69,7 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  if (loadingSession || !token) {
+  if (!hydrated || loadingSession || !token) {
     return <LoadingScreen />;
   }
 

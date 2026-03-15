@@ -86,19 +86,41 @@ class EnvSchema {
 
   @IsOptional()
   @IsString()
-  QUICKEKYC_API_URL?: string;
+  SUREPASS_API_URL?: string;
 
   @IsOptional()
   @IsString()
-  QUICKEKYC_API_KEY?: string;
+  SUREPASS_API_KEY?: string;
 
   @IsOptional()
   @IsString()
-  QUICKEKYC_API_KEY_HEADER?: string;
+  SUREPASS_API_KEY_HEADER?: string;
 
   @IsOptional()
   @IsString()
-  QUICKEKYC_USE_AUTHORIZATION_HEADER?: string;
+  SUREPASS_STATIC_BEARER_TOKEN?: string;
+
+  @IsOptional()
+  @IsString()
+  SUREPASS_DRIVING_LICENSE_PATH?: string;
+
+  @IsOptional()
+  @IsString()
+  SUREPASS_RC_PATH?: string;
+
+  @IsOptional()
+  @IsString()
+  SUREPASS_RC_CHALLAN_PATH?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  KYC_CACHE_VERIFIED_HOURS?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  KYC_CACHE_NON_VERIFIED_HOURS?: number;
 
   @IsOptional()
   @IsString()

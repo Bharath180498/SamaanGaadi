@@ -100,13 +100,13 @@ Current live-provider readiness:
 - OTP provider: Twilio SMS supported when `OTP_PROVIDER=twilio` + Twilio credentials are configured.
 - IDfy provider: live verification call supported when `KYC_PROVIDER=idfy` + IDfy credentials are configured.
 - Cashfree provider: live verification call supported when `KYC_PROVIDER=cashfree` + Cashfree credentials are configured.
-- QuickeKYC provider: live verification call supported when `KYC_PROVIDER=quickekyc` + QuickeKYC credentials are configured.
+- Surepass provider: live verification call supported when `KYC_PROVIDER=surepass` + Surepass bearer/API key is configured.
 - Razorpay: live order creation + webhook verification supported with Razorpay keys.
 - Cashfree Payments: live order creation + webhook status updates supported with Cashfree client credentials.
 - UPI: intent deep-link flow supported with `UPI_PAYEE_VPA`.
 - E-way bill and insurance: external API passthrough supported when API URL/key are configured; otherwise mock fallback.
 
-### QuickeKYC Railway command
+### Surepass Railway command
 
 ```bash
 npm run railway:configure-vars -- \
@@ -114,11 +114,9 @@ npm run railway:configure-vars -- \
   --postgres-service Postgres \
   --redis-service Redis \
   --skip-admin \
-  --kyc-provider quickekyc \
-  --quickekyc-api-url 'https://api.quickekyc.com/api/v1' \
-  --quickekyc-api-key 'YOUR_QUICKEKYC_API_KEY' \
-  --quickekyc-api-key-header 'x-api-key' \
-  --quickekyc-use-authorization-header 'false'
+  --kyc-provider surepass \
+  --surepass-api-url 'https://kyc-api.surepass.app' \
+  --surepass-static-bearer-token 'YOUR_SUREPASS_BEARER_TOKEN'
 railway up --service backend --detach
 ```
 

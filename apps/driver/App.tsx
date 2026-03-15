@@ -31,22 +31,39 @@ function LoadingScreen() {
 }
 
 export default function App() {
+  const hydrated = useDriverSessionStore((state) => state.hydrated);
   const token = useDriverSessionStore((state) => state.token);
   const user = useDriverSessionStore((state) => state.user);
   const onboardingStatus = useDriverSessionStore((state) => state.onboardingStatus);
-  const loading = useDriverSessionStore((state) => state.loading);
   const refreshOnboardingStatus = useDriverSessionStore((state) => state.refreshOnboardingStatus);
   const driverProfileId = useDriverAppStore((state) => state.driverProfileId);
   const lastRegisteredDriverIdRef = useRef<string | undefined>(undefined);
 
-  const [soraLoaded] = useSoraFonts({ Sora_700Bold });
-  const [manropeLoaded] = useManropeFonts({ Manrope_500Medium, Manrope_700Bold });
+  const [soraLoaded, soraError] = useSoraFonts({ Sora_700Bold });
+  const [manropeLoaded, manropeError] = useManropeFonts({ Manrope_500Medium, Manrope_700Bold });
 
   useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
     if (token && user?.id) {
       void refreshOnboardingStatus();
     }
-  }, [refreshOnboardingStatus, token, user?.id]);
+  }, [hydrated, refreshOnboardingStatus, token, user?.id]);
+
+  useEffect(() => {
+    if (hydrated) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (!useDriverSessionStore.getState().hydrated) {
+        useDriverSessionStore.getState().markHydrated();
+      }
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [hydrated]);
 
   useEffect(() => {
     if (token && driverProfileId) {
@@ -62,9 +79,9 @@ export default function App() {
     }
   }, [token, driverProfileId]);
 
-  const blockForOnboardingRefresh = Boolean(token && loading && !onboardingStatus);
+  const fontsReady = (soraLoaded || Boolean(soraError)) && (manropeLoaded || Boolean(manropeError));
 
-  if (!soraLoaded || !manropeLoaded || blockForOnboardingRefresh) {
+  if (!hydrated || !fontsReady) {
     return <LoadingScreen />;
   }
 

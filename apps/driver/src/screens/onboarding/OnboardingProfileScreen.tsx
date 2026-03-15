@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,12 +11,22 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors, radius, spacing, typography } from '../../theme';
 import type { OnboardingStackParamList } from '../../types';
 import { useOnboardingStore } from '../../store/useOnboardingStore';
+import { useDriverSessionStore } from '../../store/useDriverSessionStore';
 import { AnimatedTextField } from '../../components/AnimatedTextField';
 import { FormScreen } from '../../components/FormScreen';
 import { OnboardingCoachBanner } from '../../components/OnboardingCoachBanner';
 import { useDriverI18n } from '../../i18n/useDriverI18n';
 
 type Props = NativeStackScreenProps<OnboardingStackParamList, 'OnboardingProfile'>;
+
+function normalizeIndianPhone(value: string) {
+  const digits = value.replace(/\D/g, '');
+  if (!digits) {
+    return '';
+  }
+  const localDigits = digits.length > 10 ? digits.slice(-10) : digits;
+  return localDigits.length === 10 ? `+91${localDigits}` : '';
+}
 
 export function OnboardingProfileScreen({ navigation }: Props) {
   const { t } = useDriverI18n();
@@ -25,15 +35,15 @@ export function OnboardingProfileScreen({ navigation }: Props) {
   const updateProfile = useOnboardingStore((state) => state.updateProfile);
   const storeFullName = useOnboardingStore((state) => state.fullName);
   const storePhone = useOnboardingStore((state) => state.phone);
-  const storeEmail = useOnboardingStore((state) => state.email);
-  const storeCity = useOnboardingStore((state) => state.city);
+  const sessionPhone = useDriverSessionStore((state) => state.user?.phone ?? '');
   const error = useOnboardingStore((state) => state.error);
 
   const [fullName, setFullName] = useState(storeFullName);
-  const [phone, setPhone] = useState(storePhone);
-  const [email, setEmail] = useState(storeEmail);
-  const [city, setCity] = useState(storeCity);
   const [hasLocalEdits, setHasLocalEdits] = useState(false);
+  const normalizedPhone = useMemo(
+    () => normalizeIndianPhone(storePhone || sessionPhone),
+    [sessionPhone, storePhone]
+  );
 
   useEffect(() => {
     void load();
@@ -45,13 +55,10 @@ export function OnboardingProfileScreen({ navigation }: Props) {
     }
 
     setFullName(storeFullName);
-    setPhone(storePhone);
-    setEmail(storeEmail);
-    setCity(storeCity);
-  }, [hasLocalEdits, storeCity, storeEmail, storeFullName, storePhone]);
+  }, [hasLocalEdits, storeFullName]);
 
   const save = async () => {
-    if (!fullName.trim() || !phone.trim()) {
+    if (!fullName.trim() || !normalizedPhone) {
       Alert.alert(t('onboarding.profile.requiredTitle'), t('onboarding.profile.requiredBody'));
       return;
     }
@@ -59,9 +66,7 @@ export function OnboardingProfileScreen({ navigation }: Props) {
     try {
       await updateProfile({
         fullName: fullName.trim(),
-        phone: phone.trim(),
-        email: email.trim(),
-        city: city.trim()
+        phone: normalizedPhone
       });
       setHasLocalEdits(false);
       navigation.navigate('OnboardingVehicle');
@@ -74,7 +79,7 @@ export function OnboardingProfileScreen({ navigation }: Props) {
   return (
     <FormScreen>
       <View style={styles.container}>
-        <OnboardingCoachBanner step={1} total={5} tipKey="onboarding.help.profile" />
+        <OnboardingCoachBanner step={1} total={2} tipKey="onboarding.help.profile" />
         <Text style={styles.title}>{t('onboarding.profile.title')}</Text>
         <View style={styles.card}>
           <AnimatedTextField
@@ -89,36 +94,9 @@ export function OnboardingProfileScreen({ navigation }: Props) {
           />
           <AnimatedTextField
             label={t('onboarding.field.phone')}
-            value={phone}
-            onChangeText={(value) => {
-              setHasLocalEdits(true);
-              setPhone(value);
-            }}
-            keyboardType="phone-pad"
-            placeholder={t('onboarding.placeholder.phone')}
+            value={normalizedPhone}
+            editable={false}
             autoCapitalize="none"
-            returnKeyType="next"
-          />
-          <AnimatedTextField
-            label={t('onboarding.field.email')}
-            value={email}
-            onChangeText={(value) => {
-              setHasLocalEdits(true);
-              setEmail(value);
-            }}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            placeholder={t('onboarding.placeholder.email')}
-            returnKeyType="next"
-          />
-          <AnimatedTextField
-            label={t('onboarding.field.city')}
-            value={city}
-            onChangeText={(value) => {
-              setHasLocalEdits(true);
-              setCity(value);
-            }}
-            placeholder={t('onboarding.placeholder.city')}
             returnKeyType="done"
           />
 

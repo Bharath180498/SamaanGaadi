@@ -1,4 +1,4 @@
-import { KycDocType, KycVerificationStatus } from '@prisma/client';
+import { KycDocType, KycVerificationStatus, VehicleType } from '@prisma/client';
 
 export interface VerifyKycInput {
   userId: string;
@@ -9,6 +9,7 @@ export interface VerifyKycInput {
   onboarding?: {
     fullName?: string | null;
     phone?: string | null;
+    vehicleType?: VehicleType | null;
     aadhaarNumber?: string | null;
     licenseNumber?: string | null;
     rcNumber?: string | null;

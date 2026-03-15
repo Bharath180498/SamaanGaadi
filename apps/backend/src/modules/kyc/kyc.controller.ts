@@ -28,8 +28,8 @@ export class KycController {
     return this.kycService.verifyIdfy(payload);
   }
 
-  @Post('verify/quickekyc')
-  verifyQuickeKyc(@Body() payload: VerifyIdfyDto) {
+  @Post('verify/surepass')
+  verifySurepass(@Body() payload: VerifyIdfyDto) {
     return this.kycService.verifyIdfy(payload);
   }
 

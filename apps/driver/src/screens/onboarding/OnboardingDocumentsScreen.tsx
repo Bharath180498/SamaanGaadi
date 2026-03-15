@@ -18,7 +18,7 @@ import { useDriverI18n } from '../../i18n/useDriverI18n';
 
 type Props = NativeStackScreenProps<OnboardingStackParamList, 'OnboardingDocuments'>;
 
-const requiredDocs = ['AADHAAR_FRONT', 'LICENSE_FRONT', 'RC_FRONT', 'SELFIE'];
+const requiredDocs = ['LICENSE_FRONT', 'RC_FRONT', 'SELFIE'];
 
 function normalizeType(value: string) {
   return value.trim().toUpperCase();
@@ -26,9 +26,6 @@ function normalizeType(value: string) {
 
 function documentLabelKey(docType: string) {
   const normalized = normalizeType(docType);
-  if (normalized === 'AADHAAR_FRONT') {
-    return 'onboarding.doc.aadhaar';
-  }
   if (normalized === 'LICENSE_FRONT') {
     return 'onboarding.doc.license';
   }
@@ -53,6 +50,7 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
   const vehicleType = useOnboardingStore((state) => state.vehicleType);
   const vehicleNumber = useOnboardingStore((state) => state.vehicleNumber);
   const licenseNumber = useOnboardingStore((state) => state.licenseNumber);
+  const dateOfBirth = useOnboardingStore((state) => state.dateOfBirth);
   const accountHolderName = useOnboardingStore((state) => state.accountHolderName);
   const bankName = useOnboardingStore((state) => state.bankName);
   const accountNumber = useOnboardingStore((state) => state.accountNumber);
@@ -82,6 +80,7 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
         ['onboarding.field.vehicleTypeShort', vehicleType],
         ['onboarding.field.vehicleNumberShort', vehicleNumber],
         ['onboarding.field.licenseNumberShort', licenseNumber],
+        ['onboarding.field.dateOfBirthShort', dateOfBirth],
         ['onboarding.field.accountHolderShort', accountHolderName],
         ['onboarding.field.bankNameShort', bankName],
         ['onboarding.field.accountNumberShort', accountNumber],
@@ -94,6 +93,7 @@ export function OnboardingDocumentsScreen({ navigation }: Props) {
       accountHolderName,
       accountNumber,
       bankName,
+      dateOfBirth,
       fullName,
       ifscCode,
       licenseNumber,

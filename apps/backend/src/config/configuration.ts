@@ -56,11 +56,18 @@ export default () => ({
     webhookSecret: process.env.CASHFREE_WEBHOOK_SECRET ?? '',
     paymentReturnUrl: process.env.CASHFREE_PAYMENT_RETURN_URL ?? ''
   },
-  quickeKyc: {
-    apiUrl: process.env.QUICKEKYC_API_URL ?? 'https://api.quickekyc.com/api/v1',
-    apiKey: process.env.QUICKEKYC_API_KEY ?? '',
-    apiKeyHeader: process.env.QUICKEKYC_API_KEY_HEADER ?? 'x-api-key',
-    useAuthorizationHeader: process.env.QUICKEKYC_USE_AUTHORIZATION_HEADER === 'true'
+  surepass: {
+    apiUrl: process.env.SUREPASS_API_URL ?? 'https://kyc-api.surepass.io',
+    apiKey: process.env.SUREPASS_API_KEY ?? '',
+    apiKeyHeader: process.env.SUREPASS_API_KEY_HEADER ?? 'x-api-key',
+    staticBearerToken: process.env.SUREPASS_STATIC_BEARER_TOKEN ?? '',
+    drivingLicensePath: process.env.SUREPASS_DRIVING_LICENSE_PATH ?? '/api/v1/driving-license/driving-license',
+    rcPath: process.env.SUREPASS_RC_PATH ?? '/api/v1/rc/rc-v2',
+    rcChallanPath: process.env.SUREPASS_RC_CHALLAN_PATH ?? ''
+  },
+  kycCache: {
+    verifiedHours: Number(process.env.KYC_CACHE_VERIFIED_HOURS ?? 2160),
+    nonVerifiedHours: Number(process.env.KYC_CACHE_NON_VERIFIED_HOURS ?? 24)
   },
   fcmServerKey: process.env.FCM_SERVER_KEY ?? '',
   razorpay: {
