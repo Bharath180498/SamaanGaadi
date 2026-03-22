@@ -98,7 +98,7 @@ fi
 
 (
   cd "$APP_DIR"
-  EXPO_PACKAGER_PROXY_URL="$PUBLIC_URL" npx expo start "${EXPO_FLAGS[@]}"
+  EXPO_NO_METRO_WORKSPACE_ROOT=1 EXPO_PACKAGER_PROXY_URL="$PUBLIC_URL" npx expo start "${EXPO_FLAGS[@]}"
 ) &
 EXPO_PID=$!
 

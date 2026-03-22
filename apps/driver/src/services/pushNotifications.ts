@@ -1,28 +1,75 @@
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import { isRunningInExpoGo } from 'expo';
 import appConfig from '../../app.json';
 import api from './api';
 
 let expoGoPushWarned = false;
+let notificationsLoadFailedWarned = false;
+let notificationsModulePromise: Promise<typeof import('expo-notifications') | null> | null = null;
+let notificationHandlerConfigured = false;
 
 function isExpoGoPushUnsupported(error: unknown) {
   const message = String((error as { message?: string })?.message ?? error ?? '').toLowerCase();
   return message.includes('expo go') && message.includes('push') && message.includes('removed');
 }
 
-try {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false
-    })
-  });
-} catch (error) {
-  if (!isExpoGoPushUnsupported(error)) {
-    console.warn('Driver notification handler setup failed:', error);
+function warnExpoGoPushSkippedOnce() {
+  if (!expoGoPushWarned) {
+    console.info('Driver push registration skipped in Android Expo Go. Use a development build for push testing.');
+    expoGoPushWarned = true;
+  }
+}
+
+async function getNotificationsModule() {
+  if (Platform.OS === 'android' && isRunningInExpoGo()) {
+    warnExpoGoPushSkippedOnce();
+    return null;
+  }
+
+  if (!notificationsModulePromise) {
+    notificationsModulePromise = import('expo-notifications')
+      .then((module) => module)
+      .catch((error) => {
+        if (isExpoGoPushUnsupported(error)) {
+          warnExpoGoPushSkippedOnce();
+          return null;
+        }
+        if (!notificationsLoadFailedWarned) {
+          console.warn('Driver notifications module could not be loaded:', error);
+          notificationsLoadFailedWarned = true;
+        }
+        return null;
+      });
+  }
+
+  return notificationsModulePromise;
+}
+
+async function ensureNotificationHandler() {
+  if (notificationHandlerConfigured) {
+    return;
+  }
+
+  const Notifications = await getNotificationsModule();
+  if (!Notifications) {
+    return;
+  }
+
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false
+      })
+    });
+    notificationHandlerConfigured = true;
+  } catch (error) {
+    if (!isExpoGoPushUnsupported(error)) {
+      console.warn('Driver notification handler setup failed:', error);
+    }
   }
 }
 
@@ -52,6 +99,13 @@ function expoProjectId() {
 
 async function getPushToken() {
   try {
+    const Notifications = await getNotificationsModule();
+    if (!Notifications) {
+      return null;
+    }
+
+    await ensureNotificationHandler();
+
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
         name: 'default',
@@ -81,10 +135,7 @@ async function getPushToken() {
     return token.data;
   } catch (error) {
     if (isExpoGoPushUnsupported(error)) {
-      if (!expoGoPushWarned) {
-        console.info('Driver push registration skipped in Expo Go Android. Use a development build for push testing.');
-        expoGoPushWarned = true;
-      }
+      warnExpoGoPushSkippedOnce();
       return null;
     }
     console.warn('Driver push token registration skipped:', error);

@@ -35,8 +35,6 @@ interface OrderSummaryRow {
 }
 
 const FALLBACK_PAYMENT_LABELS = {
-  VISA_5496: 'Visa ...5496',
-  MASTERCARD_6802: 'Mastercard ...6802',
   UPI_SCAN_PAY: 'UPI Scan & Pay',
   DRIVER_UPI_DIRECT: 'Driver UPI',
   CASH: 'Cash on delivery'

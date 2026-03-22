@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Linking,
@@ -9,9 +10,11 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   Vibration,
   View
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { io } from 'socket.io-client';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import api, { REALTIME_BASE_URL } from '../../services/api';
@@ -118,6 +121,17 @@ function vehicleEmoji(vehicleType?: string) {
     return '🚚';
   }
   return '🚛';
+}
+
+function formatStatusLabel(value?: string) {
+  if (!value) {
+    return 'Live';
+  }
+
+  return value
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function normalizeImageUrl(value: unknown) {
@@ -276,18 +290,18 @@ function vehicleLabel(vehicleType?: string) {
 
 export function CustomerTrackingScreen({ navigation }: Props) {
   const refreshOrder = useCustomerStore((state) => state.refreshOrder);
-  const refreshTimeline = useCustomerStore((state) => state.refreshTimeline);
   const refreshLocationHistory = useCustomerStore((state) => state.refreshLocationHistory);
   const activeOrderId = useCustomerStore((state) => state.activeOrderId);
   const generatedEwayBillNumber = useCustomerStore((state) => state.generatedEwayBillNumber);
   const dismissActiveOrder = useCustomerStore((state) => state.dismissActiveOrder);
 
   const [order, setOrder] = useState<any>();
-  const [timeline, setTimeline] = useState<any[]>([]);
   const [points, setPoints] = useState<DriverPoint[]>([]);
   const [dispatchDecisions, setDispatchDecisions] = useState<any[]>([]);
   const [rating, setRating] = useState(5);
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const [submittingRating, setSubmittingRating] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
   const [tipAmount, setTipAmount] = useState(0);
   const [summaryClosed, setSummaryClosed] = useState(false);
   const [proofImageFailed, setProofImageFailed] = useState(false);
@@ -297,9 +311,21 @@ export function CustomerTrackingScreen({ navigation }: Props) {
   const arrivalAlertedOrderRef = useRef<string | null>(null);
   const deliveryAlertedOrderRef = useRef<string | null>(null);
 
+  const parseLocationPoints = (historyPayload?: { points?: Array<{ lat?: unknown; lng?: unknown; timestamp?: string }> }) =>
+    (historyPayload?.points ?? [])
+      .map((item) => ({
+        lat: Number(item.lat),
+        lng: Number(item.lng),
+        timestamp:
+          typeof item.timestamp === 'string' && item.timestamp.trim()
+            ? item.timestamp
+            : new Date().toISOString()
+      }))
+      .filter((item) => !Number.isNaN(item.lat) && !Number.isNaN(item.lng))
+      .reverse();
+
   useEffect(() => {
     setOrder(undefined);
-    setTimeline([]);
     setPoints([]);
     setDispatchDecisions([]);
     setRouteCoordinates([]);
@@ -310,43 +336,38 @@ export function CustomerTrackingScreen({ navigation }: Props) {
 
   useEffect(() => {
     const load = async () => {
-      const [orderPayload, timelinePayload, historyPayload] = await Promise.all([
+      const [orderResult, historyResult, decisionsResult] = await Promise.allSettled([
         refreshOrder(),
-        refreshTimeline(),
-        refreshLocationHistory()
+        refreshLocationHistory(),
+        activeOrderId
+          ? api.get(`/dispatch/orders/${activeOrderId}/decisions`).then((response) => response.data)
+          : Promise.resolve([])
       ]);
 
-      const decisionsPayload = activeOrderId
-        ? await api
-            .get(`/dispatch/orders/${activeOrderId}/decisions`)
-            .then((response) => response.data)
-            .catch(() => [])
-        : [];
+      if (orderResult.status === 'fulfilled') {
+        setOrder(orderResult.value);
+      }
 
-      setOrder(orderPayload);
-      setTimeline(timelinePayload?.timeline ?? []);
-      setDispatchDecisions(Array.isArray(decisionsPayload) ? decisionsPayload : []);
-      setPoints(
-        (historyPayload?.points ?? [])
-          .map((item: any) => ({
-            lat: Number(item.lat),
-            lng: Number(item.lng),
-            timestamp: item.timestamp
-          }))
-          .filter((item: DriverPoint) => !Number.isNaN(item.lat) && !Number.isNaN(item.lng))
-          .reverse()
-      );
+      if (historyResult.status === 'fulfilled') {
+        setPoints(parseLocationPoints(historyResult.value));
+      }
+
+      if (decisionsResult.status === 'fulfilled') {
+        setDispatchDecisions(Array.isArray(decisionsResult.value) ? decisionsResult.value : []);
+      }
     };
 
     void load();
     const interval = setInterval(() => void load(), 5000);
 
     return () => clearInterval(interval);
-  }, [activeOrderId, refreshLocationHistory, refreshOrder, refreshTimeline]);
+  }, [activeOrderId, refreshLocationHistory, refreshOrder]);
 
   useEffect(() => {
     setSummaryClosed(false);
     setRatingSubmitted(false);
+    setSubmittingRating(false);
+    setFeedbackText('');
     setTipAmount(0);
   }, [activeOrderId]);
 
@@ -370,27 +391,14 @@ export function CustomerTrackingScreen({ navigation }: Props) {
     });
 
     const refreshSnapshot = () => {
-      void Promise.all([refreshOrder(), refreshTimeline(), refreshLocationHistory()]).then(
-        ([latestOrder, latestTimeline, latestHistory]) => {
-          if (latestOrder) {
-            setOrder(latestOrder);
+      void Promise.allSettled([refreshOrder(), refreshLocationHistory()]).then(
+        ([latestOrder, latestHistory]) => {
+          if (latestOrder.status === 'fulfilled' && latestOrder.value) {
+            setOrder(latestOrder.value);
           }
 
-          if (latestTimeline?.timeline) {
-            setTimeline(latestTimeline.timeline);
-          }
-
-          if (latestHistory?.points) {
-            setPoints(
-              (latestHistory.points ?? [])
-                .map((item: any) => ({
-                  lat: Number(item.lat),
-                  lng: Number(item.lng),
-                  timestamp: item.timestamp
-                }))
-                .filter((item: DriverPoint) => !Number.isNaN(item.lat) && !Number.isNaN(item.lng))
-                .reverse()
-            );
+          if (latestHistory.status === 'fulfilled') {
+            setPoints(parseLocationPoints(latestHistory.value));
           }
         }
       );
@@ -422,7 +430,7 @@ export function CustomerTrackingScreen({ navigation }: Props) {
     return () => {
       socket.disconnect();
     };
-  }, [activeOrderId, refreshLocationHistory, refreshOrder, refreshTimeline]);
+  }, [activeOrderId, refreshLocationHistory, refreshOrder]);
 
   const pickup = {
     latitude: order?.pickupLat ?? 12.9716,
@@ -436,6 +444,7 @@ export function CustomerTrackingScreen({ navigation }: Props) {
   const assignedDriver = order?.trip?.driver;
   const assignedDriverUser = assignedDriver?.user;
   const assignedDriverVehicle = assignedDriver?.vehicles?.[0];
+  const driverPhotoUrl = normalizeImageUrl((assignedDriverUser as { photoUrl?: unknown } | undefined)?.photoUrl);
   const deliveryProof = order?.trip?.deliveryProof;
   const proofReceiverName = typeof deliveryProof?.receiverName === 'string' ? deliveryProof.receiverName : '';
   const proofPhotoUrl = normalizeImageUrl(deliveryProof?.photoUrl);
@@ -447,12 +456,18 @@ export function CustomerTrackingScreen({ navigation }: Props) {
       : undefined;
   const showProofPhoto = Boolean(proofPhotoUrl) && !proofImageFailed;
   const hasDeliveryProof = Boolean(proofReceiverName || proofPhotoUrl || deliveryProof?.receiverSignature);
+  const tripStartOtp =
+    typeof order?.trip?.startOtpCode === 'string' ? order.trip.startOtpCode.trim() : '';
+  const showTripStartOtp =
+    Boolean(tripStartOtp) &&
+    ['ASSIGNED', 'DRIVER_EN_ROUTE', 'ARRIVED_PICKUP'].includes(
+      String(order?.trip?.status ?? '')
+    );
   useEffect(() => {
     setProofImageFailed(false);
   }, [proofPhotoUrl]);
   const tripPreferredUpiId = order?.trip?.driverPreferredUpiId;
   const tripPreferredPaymentLabel = order?.trip?.driverPreferredPaymentLabel;
-  const assignedDriverUpiId = tripPreferredUpiId ?? assignedDriver?.payoutAccount?.upiId;
   const assignedDriverStaticPoint =
     typeof assignedDriver?.currentLat === 'number' && typeof assignedDriver?.currentLng === 'number'
       ? {
@@ -483,10 +498,9 @@ export function CustomerTrackingScreen({ navigation }: Props) {
     const attempts = dispatchDecisions.length;
     return Math.min(0.92, 0.18 + attempts * 0.18);
   }, [dispatchDecisions.length, hasAssignedDriver]);
-  const matchingHeadline = hasAssignedDriver ? 'Driver assigned' : 'Finding your driver';
-  const matchingSubtitle = hasAssignedDriver
-    ? 'Pickup ETA and driver details are ready.'
-    : dispatchDecisions.length > 1
+  const matchingHeadline = 'Finding your driver';
+  const matchingSubtitle =
+    dispatchDecisions.length > 1
       ? `Checked ${dispatchDecisions.length} nearby driver option(s).`
       : 'Checking nearby available drivers now.';
   const normalizedTripStatus =
@@ -497,6 +511,11 @@ export function CustomerTrackingScreen({ navigation }: Props) {
     () => TRIP_STAGES.findIndex((stage) => stage.key === (normalizedTripStatus ?? 'ASSIGNED')),
     [normalizedTripStatus]
   );
+  const safeStageIndex = currentStageIndex >= 0 ? currentStageIndex : 0;
+  const currentStageLabel = TRIP_STAGES[safeStageIndex]?.label ?? 'Assigned';
+  const nextStageLabel = TRIP_STAGES[safeStageIndex + 1]?.label;
+  const stageProgressPercent = Math.round(((safeStageIndex + 1) / TRIP_STAGES.length) * 100);
+  const liveStatusLabel = formatStatusLabel(normalizedTripStatus ?? order?.status);
   const paymentStatusDisplay = getCustomerPaymentStatusLabel({
     orderStatus: order?.status,
     payment: order?.payment
@@ -507,22 +526,16 @@ export function CustomerTrackingScreen({ navigation }: Props) {
   });
   const paymentDirectToDriver = Boolean(order?.payment?.directPayToDriver);
   const driverPaymentPreference = tripPreferredPaymentLabel ?? tripPreferredUpiId;
-  const paymentSubtitle = [
-    driverPaymentPreference ? `Driver prefers ${driverPaymentPreference}` : undefined,
-    paymentPending && order?.payment?.provider === 'WALLET'
-      ? 'Cash selected, to be collected at delivery'
-      : paymentPending
-      ? `${paymentStatusDisplay} - tap to pay or change method`
-      : `${paymentStatusDisplay} - no action needed`,
-    hasAssignedDriver
-      ? 'UPI is available during or after the ride'
-      : 'UPI unlocks once driver accepts your ride',
-    paymentDirectToDriver
-      ? 'Direct UPI mode: payment goes to driver UPI. Driver gets instant confirmation.'
-      : 'Digital payments are held by QARGO and settled after delivery'
-  ]
-    .filter(Boolean)
-    .join(' • ');
+  const paymentSubtitle = paymentPending
+    ? order?.payment?.provider === 'WALLET'
+      ? 'COD'
+      : paymentDirectToDriver
+      ? driverPaymentPreference
+        ? `Driver UPI (${driverPaymentPreference})`
+        : 'Driver UPI'
+      : 'Pay now'
+    : 'Paid';
+  const paymentSummaryLabel = paymentPending ? `${paymentSubtitle} • ${paymentStatusDisplay}` : paymentStatusDisplay;
   const isCancelledOrder = order?.status === 'CANCELLED';
   const showCompletionSheet = order?.status === 'DELIVERED' && !summaryClosed && !isCancelledOrder;
   const cancellationState = useMemo(() => {
@@ -599,6 +612,13 @@ export function CustomerTrackingScreen({ navigation }: Props) {
       : typeof effectiveDriverDistanceKm === 'number'
       ? `${effectiveDriverDistanceKm.toFixed(1)} km to ${routeDestinationLabel}`
       : 'Distance will appear once driver location is live';
+  const etaMinutes = typeof order?.trip?.etaMinutes === 'number' ? Math.max(1, Math.round(order.trip.etaMinutes)) : null;
+  const driverProgressLabel =
+    driverAtPickup || etaMinutes === null ? driverDistanceLabel : `${driverDistanceLabel} • ~${etaMinutes} min`;
+  const heroTitle = hasAssignedDriver ? driverProgressLabel : matchingHeadline;
+  const heroSubtitle = hasAssignedDriver
+    ? `Now: ${currentStageLabel}${nextStageLabel ? ` • Next: ${nextStageLabel}` : ''}`
+    : matchingSubtitle;
 
   useEffect(() => {
     if (!activeOrderId || !hasAssignedDriver) {
@@ -751,20 +771,24 @@ export function CustomerTrackingScreen({ navigation }: Props) {
 
   const submitRating = async () => {
     const tripId = order?.trip?.id;
-    if (!tripId) {
+    if (!tripId || ratingSubmitted || submittingRating) {
       return;
     }
 
     try {
+      setSubmittingRating(true);
+      const review = feedbackText.trim();
       await api.post(`/trips/${tripId}/rate`, {
         driverRating: rating,
-        review: `Rated ${rating}/5 from customer app`
+        review: review.length > 0 ? review : undefined
       });
 
       setRatingSubmitted(true);
-      Alert.alert('Thanks', 'Driver rating submitted.');
+      Alert.alert('Thanks', 'Feedback submitted successfully.');
     } catch {
-      Alert.alert('Could not submit rating', 'Please try once again.');
+      Alert.alert('Could not submit feedback', 'Please try once again.');
+    } finally {
+      setSubmittingRating(false);
     }
   };
 
@@ -943,9 +967,9 @@ export function CustomerTrackingScreen({ navigation }: Props) {
             bounces={false}
           >
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Live Delivery</Text>
+              <Text style={styles.sheetTitle}>Ride Live</Text>
               <View style={styles.statusPill}>
-                <Text style={styles.statusPillText}>{order?.status ?? 'CREATED'}</Text>
+                <Text style={styles.statusPillText}>{liveStatusLabel}</Text>
               </View>
             </View>
 
@@ -961,14 +985,33 @@ export function CustomerTrackingScreen({ navigation }: Props) {
               </Pressable>
             </View>
 
-            <View style={styles.matchingCard}>
-              <Text style={styles.matchingTitle}>{matchingHeadline}</Text>
-              <Text style={styles.matchingSubtitle}>{matchingSubtitle}</Text>
-              <View style={styles.matchingTrack}>
-                <View style={[styles.matchingFill, { width: `${Math.round(matchingProgress * 100)}%` }]} />
+            <LinearGradient
+              colors={hasAssignedDriver ? ['#071B44', '#16439A'] : ['#0F172A', '#1E40AF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.heroCard}
+            >
+              <View style={styles.heroTopRow}>
+                <Text style={styles.heroEyebrow}>{hasAssignedDriver ? 'QARGO LIVE' : 'MATCHING'}</Text>
+                <View style={styles.heroStatusPill}>
+                  <Text style={styles.heroStatusPillText}>{liveStatusLabel}</Text>
+                </View>
               </View>
-              {hasAssignedDriver ? <Text style={styles.driverDistanceText}>{driverDistanceLabel}</Text> : null}
-              {canCancelBooking ? (
+              <Text style={styles.heroTitle}>{heroTitle}</Text>
+              <Text style={styles.heroSubtitle}>{heroSubtitle}</Text>
+
+              {!hasAssignedDriver ? (
+                <View style={styles.matchingTrack}>
+                  <View style={[styles.matchingFill, { width: `${Math.round(matchingProgress * 100)}%` }]} />
+                </View>
+              ) : (
+                <View style={styles.heroMetaRow}>
+                  <Text style={styles.heroMetaText}>Trip progress {stageProgressPercent}%</Text>
+                  <Text style={styles.heroMetaText}>{currentStageLabel}</Text>
+                </View>
+              )}
+
+              {!hasAssignedDriver && canCancelBooking ? (
                 <View style={styles.cancelRow}>
                   <Text style={styles.cancelHint}>{cancellationState.hint}</Text>
                   <Pressable style={styles.cancelButton} onPress={() => void cancelBooking()}>
@@ -976,64 +1019,20 @@ export function CustomerTrackingScreen({ navigation }: Props) {
                   </Pressable>
                 </View>
               ) : null}
-            </View>
-
-            <View style={styles.infoGrid}>
-              <View style={styles.infoCard}>
-                <Text style={styles.infoLabel}>Trip status</Text>
-                <Text style={styles.infoValue}>{order?.trip?.status ?? 'MATCHING'}</Text>
-              </View>
-              <View style={styles.infoCard}>
-                <Text style={styles.infoLabel}>ETA</Text>
-                <Text style={styles.infoValue}>{order?.trip?.etaMinutes ?? 15} min</Text>
-              </View>
-              <View style={styles.infoCard}>
-                <Text style={styles.infoLabel}>Waiting charge</Text>
-                <Text style={styles.infoValue}>INR {Number(order?.waitingCharge ?? 0).toFixed(0)}</Text>
-              </View>
-              <View style={styles.infoCard}>
-                <Text style={styles.infoLabel}>Payment</Text>
-                <Text style={styles.infoValue}>{paymentStatusDisplay}</Text>
-              </View>
-            </View>
-
-            <Pressable style={styles.paymentAction} onPress={() => navigation.navigate('CustomerPayment')}>
-              <Text style={styles.paymentActionTitle}>Payment</Text>
-              <Text style={styles.paymentActionSubtitle}>{paymentSubtitle}</Text>
-            </Pressable>
-
-            <View style={styles.stageCard}>
-              <Text style={styles.stageTitle}>Trip stage map</Text>
-              <View style={styles.stageRow}>
-                {TRIP_STAGES.map((stage, index) => {
-                  const completed = currentStageIndex >= index;
-                  const active = currentStageIndex === index;
-
-                  return (
-                    <View key={stage.key} style={styles.stageItem}>
-                      <View style={styles.stageNodeWrap}>
-                        <View
-                          style={[styles.stageNode, completed && styles.stageNodeDone, active && styles.stageNodeActive]}
-                        />
-                        {index < TRIP_STAGES.length - 1 ? (
-                          <View style={[styles.stageLine, currentStageIndex > index && styles.stageLineDone]} />
-                        ) : null}
-                      </View>
-                      <Text style={[styles.stageLabel, completed && styles.stageLabelDone]}>{stage.label}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
+            </LinearGradient>
 
             {assignedDriver ? (
               <View style={styles.driverCard}>
                 <View style={styles.driverCardHead}>
                   <View style={styles.driverAvatar}>
-                    <Text style={styles.driverAvatarText}>{driverInitial}</Text>
+                    {driverPhotoUrl ? (
+                      <Image source={{ uri: driverPhotoUrl }} style={styles.driverAvatarImage} resizeMode="cover" />
+                    ) : (
+                      <Text style={styles.driverAvatarText}>{driverInitial}</Text>
+                    )}
                   </View>
                   <View style={styles.driverHeadCopy}>
-                    <Text style={styles.driverName}>{assignedDriverUser?.name ?? 'Driver assigned'}</Text>
+                    <Text style={styles.driverName}>{assignedDriverUser?.name ?? 'Driver'}</Text>
                     <Text style={styles.driverMetaLine}>
                       {typeof assignedDriverUser?.rating === 'number'
                         ? `${assignedDriverUser.rating.toFixed(1)} rating`
@@ -1047,7 +1046,6 @@ export function CustomerTrackingScreen({ navigation }: Props) {
                     <Text style={styles.callButtonText}>Call</Text>
                   </Pressable>
                 </View>
-
                 <View style={styles.driverInfoGrid}>
                   <View style={styles.driverInfoItem}>
                     <Text style={styles.driverInfoLabel}>Vehicle</Text>
@@ -1059,33 +1057,47 @@ export function CustomerTrackingScreen({ navigation }: Props) {
                     <Text style={styles.driverInfoLabel}>Vehicle No.</Text>
                     <Text style={styles.driverInfoValue}>{assignedDriver?.vehicleNumber ?? 'Pending'}</Text>
                   </View>
-                  <View style={styles.driverInfoItem}>
-                    <Text style={styles.driverInfoLabel}>Phone</Text>
-                    <Text style={styles.driverInfoValue}>{assignedDriverUser?.phone ?? 'Pending'}</Text>
-                  </View>
-                  <View style={styles.driverInfoItem}>
-                    <Text style={styles.driverInfoLabel}>License</Text>
-                    <Text style={styles.driverInfoValue}>{assignedDriver?.licenseNumber ?? 'Pending'}</Text>
-                  </View>
-                  <View style={styles.driverInfoItem}>
-                    <Text style={styles.driverInfoLabel}>
-                      {tripPreferredUpiId ? 'Driver preferred UPI' : 'Driver UPI'}
-                    </Text>
-                    <Text style={styles.driverInfoValue}>
-                      {assignedDriverUpiId ?? 'Pending'}
-                      {tripPreferredPaymentLabel ? ` (${tripPreferredPaymentLabel})` : ''}
-                    </Text>
-                  </View>
                 </View>
+                <Text style={styles.driverDistanceText}>{driverProgressLabel}</Text>
               </View>
-            ) : (
-              <View style={styles.driverWaitingCard}>
-                <Text style={styles.driverWaitingTitle}>Looking for your driver</Text>
-                <Text style={styles.driverWaitingSubtitle}>
-                  Driver profile, vehicle number, and contact will show up as soon as assignment is done.
+            ) : null}
+
+            {showTripStartOtp ? (
+              <View style={styles.startOtpCard}>
+                <Text style={styles.startOtpLabel}>Ride start OTP</Text>
+                <Text style={styles.startOtpCode}>{tripStartOtp}</Text>
+                <Text style={styles.startOtpHint}>
+                  Share this code with your driver at pickup to start the trip.
                 </Text>
               </View>
-            )}
+            ) : null}
+
+            <Pressable style={styles.paymentAction} onPress={() => navigation.navigate('CustomerPayment')}>
+              <Text style={styles.paymentActionTitle}>Payment</Text>
+              <Text style={styles.paymentActionSubtitle}>{paymentSummaryLabel}</Text>
+            </Pressable>
+
+            <View style={styles.stageCard}>
+              <View style={styles.stageCardHead}>
+                <Text style={styles.stageTitle}>Trip stage</Text>
+                <Text style={styles.stageProgressText}>{stageProgressPercent}%</Text>
+              </View>
+              <View style={styles.stageProgressTrack}>
+                <View style={[styles.stageProgressFill, { width: `${stageProgressPercent}%` }]} />
+              </View>
+              <View style={styles.stagePillRow}>
+                <View style={[styles.stagePill, styles.stagePillActive]}>
+                  <Text style={styles.stagePillLabel}>Now</Text>
+                  <Text style={styles.stagePillValue}>{currentStageLabel}</Text>
+                </View>
+                {nextStageLabel ? (
+                  <View style={styles.stagePill}>
+                    <Text style={styles.stagePillLabel}>Next</Text>
+                    <Text style={styles.stagePillValue}>{nextStageLabel}</Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
 
             {ewayDisplay ? (
               <View style={styles.ewayCard}>
@@ -1124,20 +1136,6 @@ export function CustomerTrackingScreen({ navigation }: Props) {
               </View>
             ) : null}
 
-            <Text style={styles.timelineTitle}>Trip timeline</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.timelineRow}>
-              {timeline.map((event) => (
-                <View key={`${event.key}-${event.timestamp}`} style={styles.timelineItem}>
-                  <Text style={styles.timelineStatus}>{event.status}</Text>
-                  <Text style={styles.timelineTime}>
-                    {new Date(event.timestamp).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </Text>
-                </View>
-              ))}
-            </ScrollView>
           </ScrollView>
         </View>
       </View>
@@ -1151,15 +1149,29 @@ export function CustomerTrackingScreen({ navigation }: Props) {
               showsVerticalScrollIndicator={false}
             >
               <View style={styles.summaryHandle} />
-              <Text style={styles.summaryTitle}>Trip completed</Text>
-              <Text style={styles.summarySub}>Review summary and tip your driver</Text>
+              <LinearGradient
+                colors={['#071B44', '#16439A']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.summaryHero}
+              >
+                <View style={styles.summaryHeroRow}>
+                  <Text style={styles.summaryHeroEyebrow}>TRIP COMPLETE</Text>
+                  <View style={styles.summaryHeroPill}>
+                    <Text style={styles.summaryHeroPillText}>{paymentPending ? 'PAYMENT PENDING' : 'PAID'}</Text>
+                  </View>
+                </View>
+                <Text style={styles.summaryHeroTitle}>Delivered successfully</Text>
+                <Text style={styles.summaryHeroSub}>Thanks for riding with Qargo</Text>
+                <Text style={styles.summaryHeroFare}>
+                  INR {Number(order?.finalPrice ?? order?.estimatedPrice ?? 0).toFixed(0)}
+                </Text>
+              </LinearGradient>
 
               <View style={styles.summaryStatsRow}>
                 <View style={styles.summaryStat}>
-                  <Text style={styles.summaryStatLabel}>Final fare</Text>
-                  <Text style={styles.summaryStatValue}>
-                    INR {Number(order?.finalPrice ?? order?.estimatedPrice ?? 0).toFixed(0)}
-                  </Text>
+                  <Text style={styles.summaryStatLabel}>Trip stage</Text>
+                  <Text style={styles.summaryStatValue}>{currentStageLabel}</Text>
                 </View>
                 <View style={styles.summaryStat}>
                   <Text style={styles.summaryStatLabel}>Waiting charge</Text>
@@ -1216,18 +1228,52 @@ export function CustomerTrackingScreen({ navigation }: Props) {
                 ))}
               </View>
 
-              <Text style={styles.summarySectionTitle}>Rate driver</Text>
-              <View style={styles.ratingRow}>
-                {[1, 2, 3, 4, 5].map((value) => (
-                  <Pressable
-                    key={value}
-                    style={[styles.ratingDot, rating >= value && styles.ratingDotActive]}
-                    onPress={() => setRating(value)}
-                    disabled={ratingSubmitted}
-                  >
-                    <Text style={[styles.ratingDotText, rating >= value && styles.ratingDotTextActive]}>{value}</Text>
-                  </Pressable>
-                ))}
+              <View style={styles.feedbackCard}>
+                <Text style={styles.summarySectionTitle}>How was your driver?</Text>
+                <View style={styles.feedbackStarsRow}>
+                  {[1, 2, 3, 4, 5].map((value) => (
+                    <Pressable
+                      key={value}
+                      style={styles.feedbackStarButton}
+                      onPress={() => setRating(value)}
+                      disabled={ratingSubmitted || submittingRating}
+                    >
+                      <Text style={[styles.feedbackStar, rating >= value && styles.feedbackStarActive]}>
+                        {rating >= value ? '★' : '☆'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={styles.feedbackScoreText}>
+                  {rating}/5 {rating >= 4 ? 'Great' : rating >= 3 ? 'Good' : 'Needs improvement'}
+                </Text>
+                <TextInput
+                  value={feedbackText}
+                  onChangeText={setFeedbackText}
+                  editable={!ratingSubmitted && !submittingRating}
+                  style={styles.feedbackInput}
+                  multiline
+                  maxLength={240}
+                  placeholder="Share quick feedback (optional)"
+                  placeholderTextColor="#94A3B8"
+                  textAlignVertical="top"
+                />
+                <Pressable
+                  style={[
+                    styles.feedbackSubmitButton,
+                    (ratingSubmitted || submittingRating) && styles.feedbackSubmitButtonDisabled
+                  ]}
+                  onPress={() => void submitRating()}
+                  disabled={ratingSubmitted || submittingRating}
+                >
+                  {submittingRating ? (
+                    <ActivityIndicator color="#EFF6FF" />
+                  ) : (
+                    <Text style={styles.feedbackSubmitButtonText}>
+                      {ratingSubmitted ? 'Feedback submitted' : 'Submit feedback'}
+                    </Text>
+                  )}
+                </Pressable>
               </View>
 
               <View style={styles.summaryActions}>
@@ -1236,9 +1282,6 @@ export function CustomerTrackingScreen({ navigation }: Props) {
                     <Text style={styles.summaryPayButtonText}>Pay now</Text>
                   </Pressable>
                 ) : null}
-                <Pressable style={styles.rateButton} onPress={() => void submitRating()} disabled={ratingSubmitted}>
-                  <Text style={styles.rateButtonText}>{ratingSubmitted ? 'Rating submitted' : 'Submit rating'}</Text>
-                </Pressable>
                 <Pressable style={styles.summaryDoneButton} onPress={finishTripSummary}>
                   <Text style={styles.summaryDoneButtonText}>Done</Text>
                 </Pressable>
@@ -1376,7 +1419,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingTop: 10,
     paddingBottom: 18,
-    gap: 10
+    gap: 12
   },
   sheetHeader: {
     flexDirection: 'row',
@@ -1390,13 +1433,13 @@ const styles = StyleSheet.create({
   screenNavButton: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 12,
+    borderColor: '#DBEAFE',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 14,
     paddingVertical: 6
   },
   screenNavText: {
-    color: '#334155',
+    color: '#1E3A8A',
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
@@ -1407,44 +1450,83 @@ const styles = StyleSheet.create({
   },
   statusPill: {
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
     backgroundColor: '#EFF6FF',
     paddingHorizontal: 10,
     paddingVertical: 5
   },
   statusPillText: {
-    color: '#1D4ED8',
+    color: '#1E3A8A',
     fontFamily: 'Manrope_700Bold',
     fontSize: 11
   },
-  matchingCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 6
+  heroCard: {
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 8,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8
   },
-  matchingTitle: {
-    color: '#0F172A',
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  heroEyebrow: {
+    color: '#93C5FD',
     fontFamily: 'Manrope_700Bold',
-    fontSize: 15
+    fontSize: 11,
+    letterSpacing: 1
   },
-  matchingSubtitle: {
-    color: '#64748B',
-    fontFamily: 'Manrope_500Medium',
+  heroStatusPill: {
+    borderRadius: 999,
+    backgroundColor: 'rgba(219, 234, 254, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(191, 219, 254, 0.38)',
+    paddingHorizontal: 10,
+    paddingVertical: 4
+  },
+  heroStatusPillText: {
+    color: '#DBEAFE',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 11
+  },
+  heroTitle: {
+    color: '#F8FAFC',
+    fontFamily: 'Sora_700Bold',
+    fontSize: 19
+  },
+  heroSubtitle: {
+    color: '#BFDBFE',
+    fontFamily: 'Manrope_600SemiBold',
     fontSize: 12
+  },
+  heroMetaRow: {
+    marginTop: 2,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  heroMetaText: {
+    color: '#DBEAFE',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 11
   },
   matchingTrack: {
     width: '100%',
-    height: 8,
+    height: 7,
     borderRadius: 999,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: 'rgba(148, 163, 184, 0.35)',
     overflow: 'hidden'
   },
   matchingFill: {
     height: '100%',
-    backgroundColor: '#1D4ED8'
+    backgroundColor: '#60A5FA'
   },
   driverDistanceText: {
     color: '#1E3A8A',
@@ -1456,131 +1538,135 @@ const styles = StyleSheet.create({
     gap: 8
   },
   cancelHint: {
-    color: '#9A3412',
+    color: '#FDE68A',
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
   cancelButton: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#FCA5A5',
-    backgroundColor: '#FEF2F2',
+    borderColor: 'rgba(254, 202, 202, 0.45)',
+    backgroundColor: 'rgba(127, 29, 29, 0.28)',
     alignItems: 'center',
     paddingVertical: 8
   },
   cancelButtonText: {
-    color: '#B91C1C',
+    color: '#FEE2E2',
     fontFamily: 'Manrope_700Bold',
     fontSize: 13
   },
   paymentAction: {
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    backgroundColor: '#F8FBFF',
+    paddingHorizontal: 13,
+    paddingVertical: 10,
     gap: 2
   },
   paymentActionTitle: {
-    color: '#1E3A8A',
+    color: '#0B3A91',
     fontFamily: 'Manrope_700Bold',
     fontSize: 14
   },
   paymentActionSubtitle: {
-    color: '#1D4ED8',
+    color: '#1E40AF',
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 12
+  },
+  startOtpCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    gap: 4
+  },
+  startOtpLabel: {
+    color: '#1E40AF',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 12
+  },
+  startOtpCode: {
+    color: '#0B3A91',
+    fontFamily: 'Sora_700Bold',
+    fontSize: 28,
+    letterSpacing: 4
+  },
+  startOtpHint: {
+    color: '#1E3A8A',
     fontFamily: 'Manrope_500Medium',
     fontSize: 12
   },
   stageCard: {
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    padding: 10,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#FFFFFF',
+    padding: 12,
     gap: 8
+  },
+  stageCardHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
   },
   stageTitle: {
-    color: '#0F172A',
+    color: '#0B3A91',
     fontFamily: 'Manrope_700Bold',
     fontSize: 13
   },
-  stageRow: {
-    gap: 6
-  },
-  stageItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8
-  },
-  stageNodeWrap: {
-    alignItems: 'center'
-  },
-  stageNode: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
-    marginTop: 2
-  },
-  stageNodeDone: {
-    borderColor: '#1D4ED8',
-    backgroundColor: '#BFDBFE'
-  },
-  stageNodeActive: {
-    backgroundColor: '#1D4ED8'
-  },
-  stageLine: {
-    width: 2,
-    height: 18,
-    backgroundColor: '#CBD5E1',
-    marginTop: 2
-  },
-  stageLineDone: {
-    backgroundColor: '#1D4ED8'
-  },
-  stageLabel: {
-    color: '#64748B',
-    fontFamily: 'Manrope_500Medium',
+  stageProgressText: {
+    color: '#1D4ED8',
+    fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
-  stageLabelDone: {
-    color: '#0F172A',
-    fontFamily: 'Manrope_700Bold'
+  stageProgressTrack: {
+    width: '100%',
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: '#E0E7FF',
+    overflow: 'hidden'
   },
-  infoGrid: {
+  stageProgressFill: {
+    height: '100%',
+    backgroundColor: '#1D4ED8'
+  },
+  stagePillRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: 8
+    gap: 8
   },
-  infoCard: {
-    width: '49%',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    padding: 8
-  },
-  infoLabel: {
-    color: '#64748B',
-    fontFamily: 'Manrope_500Medium',
-    fontSize: 11
-  },
-  infoValue: {
-    marginTop: 2,
-    color: '#0F172A',
-    fontFamily: 'Manrope_700Bold',
-    fontSize: 13
-  },
-  driverCard: {
-    borderRadius: 12,
+  stagePill: {
+    flex: 1,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#DBEAFE',
     backgroundColor: '#F8FAFF',
-    padding: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8
+  },
+  stagePillActive: {
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF'
+  },
+  stagePillLabel: {
+    color: '#64748B',
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 11
+  },
+  stagePillValue: {
+    marginTop: 2,
+    color: '#0F172A',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 12
+  },
+  driverCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#F8FAFF',
+    padding: 12,
     gap: 10
   },
   driverCardHead: {
@@ -1595,6 +1681,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#DBEAFE',
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  driverAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20
   },
   driverAvatarText: {
     color: '#1D4ED8',
@@ -1617,8 +1708,8 @@ const styles = StyleSheet.create({
   },
   callButton: {
     borderRadius: 999,
-    backgroundColor: '#1D4ED8',
-    paddingHorizontal: 12,
+    backgroundColor: '#0B3A91',
+    paddingHorizontal: 13,
     paddingVertical: 6
   },
   callButtonText: {
@@ -1649,24 +1740,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     color: '#0F172A',
     fontFamily: 'Manrope_700Bold',
-    fontSize: 12
-  },
-  driverWaitingCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    padding: 10
-  },
-  driverWaitingTitle: {
-    color: '#0F172A',
-    fontFamily: 'Manrope_700Bold',
-    fontSize: 13
-  },
-  driverWaitingSubtitle: {
-    marginTop: 2,
-    color: '#64748B',
-    fontFamily: 'Manrope_500Medium',
     fontSize: 12
   },
   ewayCard: {
@@ -1724,87 +1797,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
-  timelineTitle: {
-    color: '#0F172A',
-    fontFamily: 'Manrope_700Bold',
-    fontSize: 14
-  },
-  timelineRow: {
-    gap: 8,
-    paddingBottom: 2
-  },
-  timelineItem: {
-    minWidth: 110,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    paddingVertical: 8,
-    paddingHorizontal: 8
-  },
-  timelineStatus: {
-    color: '#0F172A',
-    fontFamily: 'Manrope_700Bold',
-    fontSize: 11
-  },
-  timelineTime: {
-    color: '#64748B',
-    fontFamily: 'Manrope_500Medium',
-    fontSize: 10,
-    marginTop: 2
-  },
-  ratingCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    padding: 10,
-    gap: 8
-  },
-  ratingTitle: {
-    color: '#0F172A',
-    fontFamily: 'Manrope_700Bold',
-    fontSize: 14
-  },
-  ratingRow: {
-    flexDirection: 'row',
-    gap: 6
-  },
-  ratingDot: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF'
-  },
-  ratingDotActive: {
-    borderColor: '#1D4ED8',
-    backgroundColor: '#DBEAFE'
-  },
-  ratingDotText: {
-    color: '#475569',
-    fontFamily: 'Manrope_700Bold',
-    fontSize: 12
-  },
-  ratingDotTextActive: {
-    color: '#1D4ED8'
-  },
-  rateButton: {
-    flex: 1,
-    borderRadius: 10,
-    backgroundColor: '#1D4ED8',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10
-  },
-  rateButtonText: {
-    color: '#EFF6FF',
-    fontFamily: 'Manrope_700Bold',
-    fontSize: 13
-  },
   summaryBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -1836,15 +1828,51 @@ const styles = StyleSheet.create({
     backgroundColor: '#CBD5E1',
     alignSelf: 'center'
   },
-  summaryTitle: {
-    color: '#0F172A',
-    fontFamily: 'Sora_700Bold',
-    fontSize: 20
+  summaryHero: {
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 4
   },
-  summarySub: {
-    color: '#64748B',
-    fontFamily: 'Manrope_500Medium',
-    fontSize: 13
+  summaryHeroRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  summaryHeroEyebrow: {
+    color: '#93C5FD',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 11,
+    letterSpacing: 0.8
+  },
+  summaryHeroPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(191, 219, 254, 0.4)',
+    backgroundColor: 'rgba(219, 234, 254, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 4
+  },
+  summaryHeroPillText: {
+    color: '#DBEAFE',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 10
+  },
+  summaryHeroTitle: {
+    color: '#F8FAFC',
+    fontFamily: 'Sora_700Bold',
+    fontSize: 19
+  },
+  summaryHeroSub: {
+    color: '#BFDBFE',
+    fontFamily: 'Manrope_600SemiBold',
+    fontSize: 12
+  },
+  summaryHeroFare: {
+    marginTop: 2,
+    color: '#EFF6FF',
+    fontFamily: 'Sora_700Bold',
+    fontSize: 23
   },
   summaryStatsRow: {
     flexDirection: 'row',
@@ -1927,6 +1955,66 @@ const styles = StyleSheet.create({
   },
   tipChipTextActive: {
     color: '#1E3A8A'
+  },
+  feedbackCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+    backgroundColor: '#F8FAFF',
+    padding: 10,
+    gap: 8
+  },
+  feedbackStarsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  feedbackStarButton: {
+    paddingHorizontal: 2,
+    paddingVertical: 1
+  },
+  feedbackStar: {
+    color: '#94A3B8',
+    fontFamily: 'Sora_700Bold',
+    fontSize: 26,
+    lineHeight: 30
+  },
+  feedbackStarActive: {
+    color: '#F59E0B'
+  },
+  feedbackScoreText: {
+    color: '#1E3A8A',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 12
+  },
+  feedbackInput: {
+    minHeight: 82,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    color: '#0F172A',
+    fontFamily: 'Manrope_500Medium',
+    fontSize: 13
+  },
+  feedbackSubmitButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1D4ED8',
+    backgroundColor: '#1D4ED8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10
+  },
+  feedbackSubmitButtonDisabled: {
+    opacity: 0.7
+  },
+  feedbackSubmitButtonText: {
+    color: '#EFF6FF',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 13
   },
   summaryActions: {
     flexDirection: 'row',

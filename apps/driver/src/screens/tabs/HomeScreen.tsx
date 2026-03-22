@@ -25,6 +25,7 @@ import { openGoogleMapsNavigation } from '../../utils/mapsNavigation';
 import { speakDriverMessage } from '../../utils/voiceGuide';
 import { buildUpiQrImageUrl, isValidUpiId } from '../../utils/upi';
 import { DeliveryProofModal, type DeliveryProofSubmission } from '../../components/DeliveryProofModal';
+import { RideStartOtpModal } from '../../components/RideStartOtpModal';
 import type { DriverTabParamList } from '../../types';
 import api from '../../services/api';
 import { useDriverSessionStore } from '../../store/useDriverSessionStore';
@@ -167,6 +168,8 @@ export function HomeScreen() {
   const [now, setNow] = useState(Date.now());
   const [deliveryProofVisible, setDeliveryProofVisible] = useState(false);
   const [deliveryProofSubmitting, setDeliveryProofSubmitting] = useState(false);
+  const [rideStartOtpVisible, setRideStartOtpVisible] = useState(false);
+  const [rideStartOtpSubmitting, setRideStartOtpSubmitting] = useState(false);
   const [completionMetrics, setCompletionMetrics] = useState<CompletionMetrics>({});
   const [offerPaymentPickerVisible, setOfferPaymentPickerVisible] = useState(false);
   const [offerPaymentMethods, setOfferPaymentMethods] = useState<OfferPaymentMethod[]>([]);
@@ -174,7 +177,6 @@ export function HomeScreen() {
   const [acceptingOffer, setAcceptingOffer] = useState(false);
   const [paymentConfirming, setPaymentConfirming] = useState(false);
   const [qrPreviewVisible, setQrPreviewVisible] = useState(false);
-  const [fullHomeUnlockedTripId, setFullHomeUnlockedTripId] = useState<string>();
   const [queueOverlayOfferId, setQueueOverlayOfferId] = useState<string>();
   const [queueOverlaySecondsLeft, setQueueOverlaySecondsLeft] = useState(
     QUEUE_OVERLAY_DECISION_SECONDS
@@ -247,9 +249,7 @@ export function HomeScreen() {
   const completionBlockedByDirectPayment = Boolean(
     currentJob && activeAction?.endpoint === 'complete' && directToDriverPaymentMode && !directPaymentCaptured
   );
-  const tripFocusTakeoverEnabled = Boolean(
-    currentTripId && fullHomeUnlockedTripId !== currentTripId
-  );
+  const tripFocusTakeoverEnabled = Boolean(currentTripId);
   const shouldShowQueueOverlay = Boolean(
     currentJob?.id && queueOverlayOfferId && queueOverlayOffer
   );
@@ -329,16 +329,6 @@ export function HomeScreen() {
       useNativeDriver: true
     }).start();
   }, [currentJob?.id, queueOverlayOffer, queueOverlayOfferId, queueOverlayTranslateX, queueOverlayVisible]);
-
-  useEffect(() => {
-    if (!currentTripId) {
-      setFullHomeUnlockedTripId(undefined);
-      return;
-    }
-    if (fullHomeUnlockedTripId && fullHomeUnlockedTripId !== currentTripId) {
-      setFullHomeUnlockedTripId(undefined);
-    }
-  }, [currentTripId, fullHomeUnlockedTripId]);
 
   useEffect(() => {
     const currentStatus = currentJob?.status;
@@ -431,11 +421,45 @@ export function HomeScreen() {
       return;
     }
 
+    if (activeAction.endpoint === 'start-loading') {
+      setRideStartOtpVisible(true);
+      return;
+    }
+
     try {
       await runTripAction(currentJob.id, activeAction.endpoint, activeAction.payload);
       speakDriverMessage(t(activeAction.labelKey), voiceGuidanceEnabled);
     } catch {
       Alert.alert(t('home.alert.actionFailedTitle'), t('home.alert.actionFailedBody'));
+    }
+  };
+
+  const submitRideStartOtp = async (otpCode: string) => {
+    if (!currentJob) {
+      Alert.alert(t('home.alert.noActiveTripTitle'), t('home.alert.noActiveTripBody'));
+      return;
+    }
+
+    setRideStartOtpSubmitting(true);
+    try {
+      await runTripAction(currentJob.id, 'start-loading', { rideStartOtp: otpCode });
+      setRideStartOtpVisible(false);
+      speakDriverMessage(t('home.action.startLoading'), voiceGuidanceEnabled);
+    } catch (error: unknown) {
+      const responseMessage = (
+        error as {
+          response?: { data?: { message?: unknown } };
+        }
+      )?.response?.data?.message;
+      const message =
+        Array.isArray(responseMessage)
+          ? responseMessage.join('\n')
+          : typeof responseMessage === 'string'
+            ? responseMessage
+            : t('home.alert.otpFailedBody');
+      Alert.alert(t('home.alert.otpFailedTitle'), message);
+    } finally {
+      setRideStartOtpSubmitting(false);
     }
   };
 
@@ -679,39 +703,52 @@ export function HomeScreen() {
   }, [acceptQueueOffer, queueOverlaySecondsLeft, shouldShowQueueOverlay]);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>{t('home.title')}</Text>
-          <LanguageSwitcher />
-        </View>
+    <SafeAreaView style={[styles.safe, tripFocusTakeoverEnabled ? styles.takeoverSafe : undefined]}>
+      <ScrollView
+        style={tripFocusTakeoverEnabled ? styles.takeoverScroll : undefined}
+        contentContainerStyle={[
+          styles.container,
+          tripFocusTakeoverEnabled ? styles.takeoverContainer : undefined
+        ]}
+      >
+        {!tripFocusTakeoverEnabled ? (
+          <View style={styles.headerRow}>
+            <Text style={styles.title}>{t('home.title')}</Text>
+            <LanguageSwitcher />
+          </View>
+        ) : (
+          <View style={[styles.focusModeHeader, styles.focusModeHeaderTakeover]}>
+            <Text style={styles.focusModeHeaderTitle}>{t('nav.focus.title')}</Text>
+            <Text style={styles.focusModeHeaderBody}>{t('nav.focus.body')}</Text>
+            <Pressable style={styles.focusModeSupportButton} onPress={() => navigation.navigate('Support')}>
+              <Text style={styles.focusModeSupportText}>{t('home.support')}</Text>
+            </Pressable>
+          </View>
+        )}
 
-        {guidedHintsEnabled ? (
+        {!tripFocusTakeoverEnabled ? (
+          <Pressable
+            style={styles.earningsSnapshotBar}
+            onPress={() => navigation.navigate('Earnings')}
+          >
+            <View style={styles.earningsSnapshotMain}>
+              <Text style={styles.earningsSnapshotLabel}>{t('home.earnings.title')}</Text>
+              <Text style={styles.earningsSnapshotAmount}>
+                INR {(earnings?.summary.takeHomeAfterSubscription ?? earnings?.summary.netPayout ?? 0).toFixed(2)}
+              </Text>
+            </View>
+            <View style={styles.earningsSnapshotMetaWrap}>
+              <Text style={styles.earningsSnapshotMeta}>{t('home.earnings.trips30', { count: earnings?.tripCount ?? 0 })}</Text>
+              <Text style={styles.earningsSnapshotMeta}>{getPlanLabel(earnings?.subscription?.plan, t)}</Text>
+            </View>
+            <Text style={styles.earningsSnapshotChevron}>{'>'}</Text>
+          </Pressable>
+        ) : null}
+
+        {!tripFocusTakeoverEnabled && guidedHintsEnabled ? (
           <View style={styles.assistantCard}>
             <Text style={styles.assistantTitle}>{t('home.assistant.title')}</Text>
             <Text style={styles.assistantText}>{assistantText}</Text>
-          </View>
-        ) : null}
-
-        {tripFocusTakeoverEnabled ? (
-          <View style={styles.focusModeCard}>
-            <Text style={styles.focusModeTitle}>{t('nav.focus.title')}</Text>
-            <Text style={styles.focusModeBody}>{t('nav.focus.body')}</Text>
-            <View style={styles.focusModeActions}>
-              <Pressable style={styles.focusModeSupportButton} onPress={() => navigation.navigate('Support')}>
-                <Text style={styles.focusModeSupportText}>{t('home.support')}</Text>
-              </Pressable>
-              <Pressable
-                style={styles.focusModeSecondaryButton}
-                onPress={() => {
-                  if (currentTripId) {
-                    setFullHomeUnlockedTripId(currentTripId);
-                  }
-                }}
-              >
-                <Text style={styles.focusModeSecondaryText}>{t('home.focus.openFullHome')}</Text>
-              </Pressable>
-            </View>
           </View>
         ) : null}
 
@@ -728,20 +765,6 @@ export function HomeScreen() {
                   <Text style={[styles.toggleButtonText, { color: colors.accent }]}>{t('home.offline')}</Text>
                 </Pressable>
               </View>
-            </View>
-
-            <View style={[styles.card, styles.earningsCard]}>
-              <Text style={styles.cardTitle}>{t('home.earnings.title')}</Text>
-              <Text style={styles.earningsValue}>
-                INR {(earnings?.summary.takeHomeAfterSubscription ?? earnings?.summary.netPayout ?? 0).toFixed(2)}
-              </Text>
-              <Text style={styles.info}>{t('home.earnings.trips30', { count: earnings?.tripCount ?? 0 })}</Text>
-              <Text style={styles.info}>
-                {t('home.earnings.plan', {
-                  plan: getPlanLabel(earnings?.subscription?.plan, t)
-                })}
-              </Text>
-              <Text style={styles.info}>{t('home.earnings.hint')}</Text>
             </View>
 
             <View style={[styles.card, activeOffer ? styles.offerCardHighlight : undefined]}>
@@ -807,11 +830,55 @@ export function HomeScreen() {
         ) : null}
 
         <View style={[styles.card, tripFocusTakeoverEnabled ? styles.tripFocusMainCard : undefined]}>
-          <Text style={styles.cardTitle}>{t('home.trip.title')}</Text>
+          <Text style={[styles.cardTitle, tripFocusTakeoverEnabled ? styles.tripFocusTitle : undefined]}>
+            {t('home.trip.title')}
+          </Text>
           {currentJob ? (
             <>
-              <Text style={styles.info}>{t('home.trip.pickup', { value: currentJob.order?.pickupAddress ?? '--' })}</Text>
-              <Text style={styles.info}>{t('home.trip.drop', { value: currentJob.order?.dropAddress ?? '--' })}</Text>
+              {tripFocusTakeoverEnabled ? (
+                <View style={styles.focusTakeoverMapShell}>
+                  <View style={styles.focusMapCanvas}>
+                    <View style={styles.focusMapRoadA} />
+                    <View style={styles.focusMapRoadB} />
+                    <View style={styles.focusMapRoadC} />
+                    <View style={styles.focusMapRoutePath} />
+                    <View style={[styles.focusMapPin, styles.focusMapPickupPin]} />
+                    <View style={[styles.focusMapPin, styles.focusMapDropPin]} />
+                  </View>
+                </View>
+              ) : null}
+              {tripFocusTakeoverEnabled ? (
+                <View style={[styles.focusRoutePanel, styles.focusRoutePanelTakeover]}>
+                  <Text style={styles.focusRoutePanelTitle}>{t('home.trip.navigatePickup')}</Text>
+                  <View style={styles.focusRouteRow}>
+                    <View style={[styles.focusRouteDot, styles.focusRouteDotPickup]} />
+                    <Text style={[styles.focusRouteText, styles.focusRouteTextTakeover]} numberOfLines={1}>
+                      {currentJob.order?.pickupAddress ?? '--'}
+                    </Text>
+                  </View>
+                  <View style={styles.focusRouteConnector} />
+                  <View style={styles.focusRouteRow}>
+                    <View style={[styles.focusRouteDot, styles.focusRouteDotDrop]} />
+                    <Text style={[styles.focusRouteText, styles.focusRouteTextTakeover]} numberOfLines={1}>
+                      {currentJob.order?.dropAddress ?? '--'}
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={[styles.focusRouteNavigateButton, styles.focusRouteNavigateButtonTakeover]}
+                    onPress={() => void quickNavigateCurrent()}
+                  >
+                    <Text style={styles.focusRouteNavigateText}>
+                      {currentJob.status === 'IN_TRANSIT' ? t('home.trip.navigateDrop') : t('home.trip.navigatePickup')}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              {!tripFocusTakeoverEnabled ? (
+                <>
+                  <Text style={styles.info}>{t('home.trip.pickup', { value: currentJob.order?.pickupAddress ?? '--' })}</Text>
+                  <Text style={styles.info}>{t('home.trip.drop', { value: currentJob.order?.dropAddress ?? '--' })}</Text>
+                </>
+              ) : null}
               <Text style={styles.info}>
                 {t('home.trip.stage', {
                   value: t(TRIP_STAGES.find((stage) => stage.key === currentJob.status)?.labelKey ?? 'home.stage.assigned')
@@ -840,11 +907,13 @@ export function HomeScreen() {
                   );
                 })}
               </View>
-              <Pressable style={styles.navButton} onPress={() => void quickNavigateCurrent()}>
-                <Text style={styles.navButtonText}>
-                  {currentJob.status === 'IN_TRANSIT' ? t('home.trip.navigateDrop') : t('home.trip.navigatePickup')}
-                </Text>
-              </Pressable>
+              {!tripFocusTakeoverEnabled ? (
+                <Pressable style={styles.navButton} onPress={() => void quickNavigateCurrent()}>
+                  <Text style={styles.navButtonText}>
+                    {currentJob.status === 'IN_TRANSIT' ? t('home.trip.navigateDrop') : t('home.trip.navigatePickup')}
+                  </Text>
+                </Pressable>
+              ) : null}
               {activeAction ? (
                 <Pressable style={styles.mainActionButton} onPress={() => void runCurrentAction()}>
                   <Text style={styles.mainActionText}>{t(activeAction.labelKey)}</Text>
@@ -902,25 +971,17 @@ export function HomeScreen() {
           </View>
         ) : null}
 
-        <View style={styles.supportCard}>
-          <Text style={styles.supportTitle}>{t('home.support')}</Text>
-          <Text style={styles.supportSub}>{t('home.supportCard.line1')}</Text>
-          <View style={styles.supportActionRow}>
-            <Pressable style={styles.supportActionPrimary} onPress={() => navigation.navigate('Support')}>
-              <Text style={styles.supportActionPrimaryText}>{t('home.supportCard.openCenter')}</Text>
-            </Pressable>
-          </View>
-          {!tripFocusTakeoverEnabled && currentTripId ? (
+        {!tripFocusTakeoverEnabled ? (
+          <View style={styles.supportCard}>
+            <Text style={styles.supportTitle}>{t('home.support')}</Text>
+            <Text style={styles.supportSub}>{t('home.supportCard.line1')}</Text>
             <View style={styles.supportActionRow}>
-              <Pressable
-                style={styles.supportActionSecondary}
-                onPress={() => setFullHomeUnlockedTripId(undefined)}
-              >
-                <Text style={styles.supportActionSecondaryText}>{t('home.focus.backToTrip')}</Text>
+              <Pressable style={styles.supportActionPrimary} onPress={() => navigation.navigate('Support')}>
+                <Text style={styles.supportActionPrimaryText}>{t('home.supportCard.openCenter')}</Text>
               </Pressable>
             </View>
-          ) : null}
-        </View>
+          </View>
+        ) : null}
       </ScrollView>
       <Modal
         animationType="fade"
@@ -1005,6 +1066,16 @@ export function HomeScreen() {
         }}
         onSubmit={submitDeliveryProof}
       />
+      <RideStartOtpModal
+        visible={rideStartOtpVisible}
+        submitting={rideStartOtpSubmitting}
+        title={t('home.otp.title')}
+        subtitle={t('home.otp.subtitle')}
+        cancelLabel={t('common.cancel')}
+        submitLabel={t('home.otp.submit')}
+        onClose={() => setRideStartOtpVisible(false)}
+        onSubmit={submitRideStartOtp}
+      />
       {queueOverlayVisible && queueOverlayOffer ? (
         <View pointerEvents="box-none" style={styles.queueOverlayRoot}>
           <Animated.View
@@ -1016,6 +1087,7 @@ export function HomeScreen() {
             ]}
           >
             <Text style={styles.queueOverlayTitle}>{t('home.queueOverlay.title')}</Text>
+            <Text style={styles.queueOverlaySuggestion}>{t('jobs.incoming')}</Text>
             <Text style={styles.queueOverlaySubtitle}>
               {t('home.queueOverlay.subtitle', { seconds: queueOverlaySecondsLeft })}
             </Text>
@@ -1068,6 +1140,13 @@ export function HomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.paper },
+  takeoverSafe: {
+    backgroundColor: '#0B1220'
+  },
+  takeoverScroll: {
+    flex: 1,
+    backgroundColor: '#0B1220'
+  },
   container: {
     padding: spacing.lg,
     gap: spacing.md,
@@ -1076,19 +1155,86 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingBottom: 120
   },
-  earningsCard: {
-    borderColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF'
+  takeoverContainer: {
+    maxWidth: undefined,
+    width: '100%',
+    alignSelf: 'stretch',
+    paddingHorizontal: 0,
+    paddingTop: 8,
+    paddingBottom: 90,
+    gap: 10
   },
-  earningsValue: {
+  earningsSnapshotBar: {
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs
+  },
+  earningsSnapshotMain: {
+    flex: 1,
+    gap: 2
+  },
+  earningsSnapshotLabel: {
+    fontFamily: typography.bodyBold,
+    color: '#1D4ED8',
+    fontSize: 11,
+    letterSpacing: 0.3
+  },
+  earningsSnapshotAmount: {
     fontFamily: typography.heading,
     color: colors.secondary,
-    fontSize: 28
+    fontSize: 20,
+    lineHeight: 24
+  },
+  earningsSnapshotMetaWrap: {
+    alignItems: 'flex-end',
+    gap: 2
+  },
+  earningsSnapshotMeta: {
+    fontFamily: typography.body,
+    color: '#334155',
+    fontSize: 11
+  },
+  earningsSnapshotChevron: {
+    fontFamily: typography.bodyBold,
+    color: '#1D4ED8',
+    fontSize: 16,
+    lineHeight: 18
   },
   headerRow: {
     gap: spacing.sm
   },
+  focusModeHeader: {
+    borderWidth: 1,
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+    borderRadius: radius.lg,
+    padding: spacing.sm,
+    gap: spacing.xs
+  },
+  focusModeHeaderTitle: {
+    fontFamily: typography.bodyBold,
+    color: '#0F172A',
+    fontSize: 15
+  },
+  focusModeHeaderBody: {
+    fontFamily: typography.body,
+    color: '#334155',
+    fontSize: 13
+  },
   title: { fontFamily: typography.heading, color: colors.accent, fontSize: 30 },
+  focusModeHeaderTakeover: {
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: '#0B1220',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm
+  },
   assistantCard: {
     borderWidth: 1,
     borderColor: '#BFDBFE',
@@ -1167,8 +1313,146 @@ const styles = StyleSheet.create({
     gap: spacing.xs
   },
   tripFocusMainCard: {
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: '#0B1220',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm
+  },
+  tripFocusTitle: {
+    color: '#DBEAFE',
+    fontSize: 15
+  },
+  focusTakeoverMapShell: {
+    marginTop: 4,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#1E3A8A',
+    backgroundColor: '#0F172A'
+  },
+  focusMapCanvas: {
+    height: 190,
+    backgroundColor: '#0F172A'
+  },
+  focusMapRoadA: {
+    position: 'absolute',
+    left: -20,
+    right: -20,
+    top: 58,
+    height: 10,
+    backgroundColor: 'rgba(148, 163, 184, 0.2)',
+    transform: [{ rotate: '-8deg' }]
+  },
+  focusMapRoadB: {
+    position: 'absolute',
+    left: 20,
+    right: -30,
+    top: 118,
+    height: 10,
+    backgroundColor: 'rgba(148, 163, 184, 0.16)',
+    transform: [{ rotate: '9deg' }]
+  },
+  focusMapRoadC: {
+    position: 'absolute',
+    left: 90,
+    top: -20,
+    bottom: -20,
+    width: 9,
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+    transform: [{ rotate: '6deg' }]
+  },
+  focusMapRoutePath: {
+    position: 'absolute',
+    left: 38,
+    right: 34,
+    top: 96,
+    height: 3,
+    borderRadius: 999,
+    backgroundColor: '#60A5FA'
+  },
+  focusMapPin: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: '#0F172A'
+  },
+  focusMapPickupPin: {
+    left: 28,
+    top: 90,
+    backgroundColor: '#2563EB'
+  },
+  focusMapDropPin: {
+    right: 24,
+    top: 90,
+    backgroundColor: '#14B8A6'
+  },
+  focusRoutePanel: {
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    borderRadius: radius.md,
+    backgroundColor: '#EFF6FF',
+    padding: spacing.sm,
+    gap: 6
+  },
+  focusRoutePanelTitle: {
+    fontFamily: typography.bodyBold,
+    color: '#1E3A8A',
+    fontSize: 12
+  },
+  focusRoutePanelTakeover: {
+    marginTop: 8,
     borderColor: '#1D4ED8',
-    backgroundColor: '#FFFFFF'
+    backgroundColor: '#0F172A'
+  },
+  focusRouteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  focusRouteDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999
+  },
+  focusRouteDotPickup: {
+    backgroundColor: '#2563EB'
+  },
+  focusRouteDotDrop: {
+    backgroundColor: '#0F172A'
+  },
+  focusRouteConnector: {
+    width: 2,
+    height: 16,
+    backgroundColor: '#93C5FD',
+    marginLeft: 4
+  },
+  focusRouteText: {
+    flex: 1,
+    fontFamily: typography.body,
+    color: '#0F172A',
+    fontSize: 12
+  },
+  focusRouteTextTakeover: {
+    color: '#DBEAFE'
+  },
+  focusRouteNavigateButton: {
+    marginTop: 6,
+    borderRadius: radius.sm,
+    backgroundColor: '#1D4ED8',
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  focusRouteNavigateButtonTakeover: {
+    backgroundColor: '#1D4ED8'
+  },
+  focusRouteNavigateText: {
+    fontFamily: typography.bodyBold,
+    color: '#EFF6FF',
+    fontSize: 13
   },
   cardTitle: { fontFamily: typography.bodyBold, color: colors.accent },
   status: { fontFamily: typography.body, color: colors.secondary },
@@ -1592,8 +1876,8 @@ const styles = StyleSheet.create({
     maxWidth: 380,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: '#1D4ED8',
-    backgroundColor: '#EFF6FF',
+    borderColor: '#3B82F6',
+    backgroundColor: '#0F172A',
     padding: spacing.md,
     shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 8 },
@@ -1604,23 +1888,30 @@ const styles = StyleSheet.create({
   },
   queueOverlayTitle: {
     fontFamily: typography.bodyBold,
-    color: '#0F172A',
+    color: '#E2E8F0',
     fontSize: 15
+  },
+  queueOverlaySuggestion: {
+    fontFamily: typography.bodyBold,
+    color: '#93C5FD',
+    fontSize: 11,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase'
   },
   queueOverlaySubtitle: {
     fontFamily: typography.body,
-    color: '#1E3A8A',
+    color: '#BFDBFE',
     fontSize: 12
   },
   queueOverlayRoute: {
     fontFamily: typography.body,
-    color: '#334155',
+    color: '#CBD5E1',
     fontSize: 12
   },
   queueOverlayEarning: {
     marginTop: 2,
     fontFamily: typography.bodyBold,
-    color: '#1E3A8A',
+    color: '#E0F2FE',
     fontSize: 14
   },
   queueOverlayTrack: {

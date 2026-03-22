@@ -9,6 +9,7 @@ import { useEffect, useRef } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { AuthNavigator } from './src/navigation/AuthNavigator';
 import { DriverTabs } from './src/navigation/DriverTabs';
+import { driverNavigationRef } from './src/navigation/driverNavigationRef';
 import { OnboardingNavigator } from './src/navigation/OnboardingNavigator';
 import { ensureDriverPushRegistered, unregisterDriverPushToken } from './src/services/pushNotifications';
 import { useDriverAppStore } from './src/store/useDriverAppStore';
@@ -86,7 +87,7 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={driverNavigationRef}>
       {!token ? (
         <AuthNavigator />
       ) : onboardingStatus === 'APPROVED' ? (

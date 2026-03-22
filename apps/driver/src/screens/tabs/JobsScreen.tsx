@@ -12,6 +12,7 @@ import { colors, radius, spacing, typography } from '../../theme';
 import { useDriverAppStore } from '../../store/useDriverAppStore';
 import { openGoogleMapsNavigation } from '../../utils/mapsNavigation';
 import { DeliveryProofModal, type DeliveryProofSubmission } from '../../components/DeliveryProofModal';
+import { RideStartOtpModal } from '../../components/RideStartOtpModal';
 import { useDriverI18n } from '../../i18n/useDriverI18n';
 
 const actionMap: Array<{ status: string; endpoint: string; labelKey: string; payload?: Record<string, unknown> }> = [
@@ -99,6 +100,8 @@ export function JobsScreen() {
   const completeTripWithDeliveryProof = useDriverAppStore((state) => state.completeTripWithDeliveryProof);
   const [deliveryProofVisible, setDeliveryProofVisible] = useState(false);
   const [deliveryProofSubmitting, setDeliveryProofSubmitting] = useState(false);
+  const [rideStartOtpVisible, setRideStartOtpVisible] = useState(false);
+  const [rideStartOtpSubmitting, setRideStartOtpSubmitting] = useState(false);
   const [completionMetrics, setCompletionMetrics] = useState<CompletionMetrics>({});
 
   const activeAction = useMemo(
@@ -136,10 +139,43 @@ export function JobsScreen() {
       return;
     }
 
+    if (activeAction.endpoint === 'start-loading') {
+      setRideStartOtpVisible(true);
+      return;
+    }
+
     try {
       await runTripAction(currentJob.id, activeAction.endpoint, activeAction.payload);
     } catch {
       Alert.alert(t('jobs.alert.actionFailedTitle'), t('jobs.alert.actionFailedBody'));
+    }
+  };
+
+  const submitRideStartOtp = async (otpCode: string) => {
+    if (!currentJob) {
+      Alert.alert(t('jobs.alert.noActiveTripTitle'), t('jobs.alert.noActiveTripBody'));
+      return;
+    }
+
+    setRideStartOtpSubmitting(true);
+    try {
+      await runTripAction(currentJob.id, 'start-loading', { rideStartOtp: otpCode });
+      setRideStartOtpVisible(false);
+    } catch (error: unknown) {
+      const responseMessage = (
+        error as {
+          response?: { data?: { message?: unknown } };
+        }
+      )?.response?.data?.message;
+      const message =
+        Array.isArray(responseMessage)
+          ? responseMessage.join('\n')
+          : typeof responseMessage === 'string'
+            ? responseMessage
+            : t('jobs.alert.otpFailedBody');
+      Alert.alert(t('jobs.alert.otpFailedTitle'), message);
+    } finally {
+      setRideStartOtpSubmitting(false);
     }
   };
 
@@ -296,6 +332,16 @@ export function JobsScreen() {
           setCompletionMetrics({});
         }}
         onSubmit={submitDeliveryProof}
+      />
+      <RideStartOtpModal
+        visible={rideStartOtpVisible}
+        submitting={rideStartOtpSubmitting}
+        title={t('jobs.otp.title')}
+        subtitle={t('jobs.otp.subtitle')}
+        cancelLabel={t('common.cancel')}
+        submitLabel={t('jobs.otp.submit')}
+        onClose={() => setRideStartOtpVisible(false)}
+        onSubmit={submitRideStartOtp}
       />
     </SafeAreaView>
   );

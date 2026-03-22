@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -15,7 +14,6 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import api from '../../services/api';
 import {
   type CustomerWalletMethod,
-  type CustomerWalletMethodType,
   type PaymentMethod,
   useCustomerStore
 } from '../../store/useCustomerStore';
@@ -25,7 +23,6 @@ import { openBestUpiApp } from '../../utils/upiApps';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CustomerPayment'>;
 
-const CARD_METHODS: PaymentMethod[] = ['VISA_5496', 'MASTERCARD_6802'];
 const UPI_PATTERN = /^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,}$/i;
 
 interface DriverDirectPaymentProfile {
@@ -64,6 +61,11 @@ function normalizeStatus(value: unknown) {
 }
 
 function readApiError(error: unknown, fallback: string) {
+  const normalizeMessage = (value: string) =>
+    value.toLowerCase().includes('timeout')
+      ? 'Payment service is taking too long. Please retry in a few seconds.'
+      : value;
+
   if (
     typeof error === 'object' &&
     error !== null &&
@@ -74,22 +76,38 @@ function readApiError(error: unknown, fallback: string) {
     const response = (error as { response: { data?: { message?: unknown } } }).response;
     const message = response.data?.message;
     if (typeof message === 'string' && message.trim()) {
-      return message.trim();
+      return normalizeMessage(message.trim());
     }
     if (Array.isArray(message) && message.length > 0) {
-      return message.map((entry) => String(entry)).join('\n');
+      return normalizeMessage(message.map((entry) => String(entry)).join('\n'));
     }
   }
 
   if (error instanceof Error && error.message.trim()) {
-    return error.message.trim();
+    return normalizeMessage(error.message.trim());
   }
 
   return fallback;
 }
 
-function walletMethodToRail(method: CustomerWalletMethod): PaymentMethod {
-  return method.type === 'UPI_ID' ? 'UPI_SCAN_PAY' : 'VISA_5496';
+function isTimeoutLikeError(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  if ('code' in error && String((error as { code?: unknown }).code ?? '').toUpperCase() === 'ECONNABORTED') {
+    return true;
+  }
+
+  if ('message' in error && String((error as { message?: unknown }).message ?? '').toLowerCase().includes('timeout')) {
+    return true;
+  }
+
+  return false;
+}
+
+function walletMethodToRail(_method: CustomerWalletMethod): PaymentMethod {
+  return 'UPI_SCAN_PAY';
 }
 
 function walletMethodLabel(method: CustomerWalletMethod) {
@@ -99,11 +117,27 @@ function walletMethodLabel(method: CustomerWalletMethod) {
   return method.label;
 }
 
-function walletMethodDescription(method: CustomerWalletMethod) {
-  if (method.type === 'UPI_ID') {
-    return 'UPI ID';
-  }
-  return method.type === 'DEBIT_CARD' ? 'Debit Card' : 'Credit Card';
+function walletMethodDescription(_method: CustomerWalletMethod) {
+  return 'UPI ID';
+}
+
+function buildDirectUpiIntent(params: { upiId: string; amount?: number; name?: string }) {
+  const amount =
+    typeof params.amount === 'number' && Number.isFinite(params.amount) && params.amount > 0
+      ? params.amount.toFixed(2)
+      : undefined;
+  const payeeName = params.name?.trim() || 'Qargo Driver';
+  const txnNote = 'Qargo ride payment';
+
+  const parts = [
+    `pa=${encodeURIComponent(params.upiId)}`,
+    `pn=${encodeURIComponent(payeeName)}`,
+    amount ? `am=${encodeURIComponent(amount)}` : undefined,
+    'cu=INR',
+    `tn=${encodeURIComponent(txnNote)}`
+  ].filter(Boolean);
+
+  return `upi://pay?${parts.join('&')}`;
 }
 
 export function CustomerPaymentScreen({ navigation }: Props) {
@@ -124,12 +158,12 @@ export function CustomerPaymentScreen({ navigation }: Props) {
     paymentMethods: []
   });
   const [loadingDriverProfile, setLoadingDriverProfile] = useState(false);
+  const [driverProfileLoadError, setDriverProfileLoadError] = useState<string | undefined>();
   const [selectedDriverPaymentMethodId, setSelectedDriverPaymentMethodId] = useState<string>();
   const [selectedWalletMethodId, setSelectedWalletMethodId] = useState<string | undefined>(
     defaultWalletMethodId
   );
 
-  const [newWalletType, setNewWalletType] = useState<CustomerWalletMethodType>('UPI_ID');
   const [newWalletValue, setNewWalletValue] = useState('');
   const [newWalletLabel, setNewWalletLabel] = useState('');
   const [newWalletSetDefault, setNewWalletSetDefault] = useState(false);
@@ -178,12 +212,6 @@ export function CustomerPaymentScreen({ navigation }: Props) {
   }, [defaultWalletMethod, selectedWalletMethodId, walletMethods]);
 
   const baseAmount = orderAmount > 0 ? orderAmount : Number(estimatedPrice ?? 0);
-  const walletCardSelected = Boolean(
-    selectedWalletMethod && selectedWalletMethod.type !== 'UPI_ID' && selectedMethod !== 'DRIVER_UPI_DIRECT'
-  );
-  const isCardMethod = CARD_METHODS.includes(selectedMethod) && walletCardSelected;
-  const cardSurchargeAmount = isCardMethod ? Math.round(baseAmount * 0.025 * 100) / 100 : 0;
-  const payableAmount = Math.round((baseAmount + cardSurchargeAmount) * 100) / 100;
 
   const upiEnabled = Boolean(
     (tripStatus && tripStatus !== 'CANCELLED') ||
@@ -229,6 +257,7 @@ export function CustomerPaymentScreen({ navigation }: Props) {
       if (!orderId) {
         setDriverDirectProfile({ paymentMethods: [] });
         setSelectedDriverPaymentMethodId(undefined);
+        setDriverProfileLoadError(undefined);
         setOrderAmount(parseAmount(estimatedPrice) ?? 0);
         setOrderStatus(undefined);
         setTripStatus(undefined);
@@ -241,9 +270,24 @@ export function CustomerPaymentScreen({ navigation }: Props) {
       if (!options?.silent) {
         setLoadingDriverProfile(true);
       }
+      if (!options?.silent) {
+        setDriverProfileLoadError(undefined);
+      }
 
       try {
-        const response = await api.get(`/orders/${orderId}`);
+        let response;
+        try {
+          response = await api.get(`/orders/${orderId}`, {
+            timeout: 15000
+          });
+        } catch (error: unknown) {
+          if (!isTimeoutLikeError(error)) {
+            throw error;
+          }
+          response = await api.get(`/orders/${orderId}`, {
+            timeout: 10000
+          });
+        }
         const payload = response.data as {
           status?: string;
           estimatedPrice?: number | string;
@@ -345,7 +389,10 @@ export function CustomerPaymentScreen({ navigation }: Props) {
           paymentMethods
         });
         setSelectedDriverPaymentMethodId(tripPreferredMethod?.id ?? preferredMethod?.id);
-      } catch {
+      } catch (error: unknown) {
+        if (!options?.silent) {
+          setDriverProfileLoadError(readApiError(error, 'Unable to load payment details right now.'));
+        }
         setDriverDirectProfile({ paymentMethods: [] });
         setSelectedDriverPaymentMethodId(undefined);
         setOrderAmount(parseAmount(estimatedPrice) ?? 0);
@@ -408,6 +455,17 @@ export function CustomerPaymentScreen({ navigation }: Props) {
     driverDirectProfile.tripPreferredUpiId ??
     driverDirectProfile.upiId;
   const hasDriverDirectUpi = Boolean(resolvedDriverUpiId);
+  const directUpiIntentUrl = useMemo(
+    () =>
+      resolvedDriverUpiId
+        ? buildDirectUpiIntent({
+            upiId: resolvedDriverUpiId,
+            amount: baseAmount > 0 ? baseAmount : undefined,
+            name: driverDirectProfile.name
+          })
+        : undefined,
+    [baseAmount, driverDirectProfile.name, resolvedDriverUpiId]
+  );
 
   useEffect(() => {
     if (!orderId || !paymentPending || !upiEnabled || !hasDriverDirectUpi) {
@@ -424,10 +482,12 @@ export function CustomerPaymentScreen({ navigation }: Props) {
   }, [hasDriverDirectUpi, orderId, paymentPending, selectedMethod, setPaymentMethod, upiEnabled]);
 
   useEffect(() => {
-    if (
-      (selectedMethod === 'DRIVER_UPI_DIRECT' && !hasDriverDirectUpi) ||
-      ((selectedMethod === 'DRIVER_UPI_DIRECT' || selectedMethod === 'UPI_SCAN_PAY') && !upiEnabled)
-    ) {
+    if (!upiEnabled && (selectedMethod === 'DRIVER_UPI_DIRECT' || selectedMethod === 'UPI_SCAN_PAY')) {
+      setPaymentMethod('CASH');
+      return;
+    }
+
+    if (selectedMethod === 'DRIVER_UPI_DIRECT' && !hasDriverDirectUpi) {
       if (defaultWalletMethod) {
         setPaymentMethod(walletMethodToRail(defaultWalletMethod));
       } else {
@@ -454,17 +514,14 @@ export function CustomerPaymentScreen({ navigation }: Props) {
       if (selectedMethod === 'CASH') {
         return 'Confirm Cash on Delivery';
       }
-      if (selectedMethod === 'DRIVER_UPI_DIRECT') {
+      if (selectedMethod === 'DRIVER_UPI_DIRECT' || selectedMethod === 'UPI_SCAN_PAY') {
         return `Pay INR ${baseAmount.toFixed(2)}`;
       }
-      if (selectedMethod === 'UPI_SCAN_PAY') {
-        return `Pay INR ${baseAmount.toFixed(2)}`;
-      }
-      return `Pay INR ${payableAmount.toFixed(2)}`;
+      return `Pay INR ${baseAmount.toFixed(2)}`;
     }
 
     return orderId ? 'Confirm payment setup' : 'Done';
-  }, [baseAmount, orderId, payableAmount, selectedMethod]);
+  }, [baseAmount, orderId, selectedMethod]);
 
   const askForPaymentConfirmation = (title: string, message: string) =>
     new Promise<boolean>((resolve) => {
@@ -486,70 +543,43 @@ export function CustomerPaymentScreen({ navigation }: Props) {
       );
     });
 
-  const getLatestPaymentStatusFromOrder = useCallback(async () => {
-    if (!orderId) {
-      return undefined;
-    }
-
-    try {
-      const response = await api.get(`/orders/${orderId}`);
-      const latest = String(response.data?.payment?.status ?? '').toUpperCase();
-      if (latest === 'CAPTURED' || latest === 'FAILED' || latest === 'PENDING') {
-        return latest;
-      }
-      return undefined;
-    } catch {
-      return undefined;
-    }
-  }, [orderId]);
-
-  const waitForGatewayFinalStatus = useCallback(async () => {
-    const deadline = Date.now() + 45_000;
-
-    while (Date.now() < deadline) {
-      const latest = await getLatestPaymentStatusFromOrder();
-      if (latest === 'CAPTURED' || latest === 'FAILED') {
-        return latest;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-    }
-
-    return 'PENDING' as const;
-  }, [getLatestPaymentStatusFromOrder]);
-
   const addWalletEntry = () => {
-    if (newWalletType === 'UPI_ID') {
-      const normalizedUpi = newWalletValue.trim().toLowerCase();
-      if (!UPI_PATTERN.test(normalizedUpi)) {
-        Alert.alert('Invalid UPI', 'Enter valid UPI ID (example: name@bank).');
-        return;
-      }
-
-      addWalletMethod({
-        type: 'UPI_ID',
-        upiId: normalizedUpi,
-        label: newWalletLabel.trim() || undefined,
-        setAsDefault: newWalletSetDefault
-      });
-    } else {
-      const last4 = newWalletValue.replace(/\D/g, '').slice(-4);
-      if (!/^\d{4}$/.test(last4)) {
-        Alert.alert('Invalid card', 'Enter card last 4 digits.');
-        return;
-      }
-
-      addWalletMethod({
-        type: newWalletType,
-        cardLast4: last4,
-        label: newWalletLabel.trim() || undefined,
-        setAsDefault: newWalletSetDefault
-      });
+    const normalizedUpi = newWalletValue.trim().toLowerCase();
+    if (!UPI_PATTERN.test(normalizedUpi)) {
+      Alert.alert('Invalid UPI', 'Enter valid UPI ID (example: name@bank).');
+      return;
     }
+
+    addWalletMethod({
+      type: 'UPI_ID',
+      upiId: normalizedUpi,
+      label: newWalletLabel.trim() || undefined,
+      setAsDefault: newWalletSetDefault
+    });
 
     setNewWalletValue('');
     setNewWalletLabel('');
     setNewWalletSetDefault(false);
+  };
+
+  const openDriverUpiApp = async () => {
+    if (!resolvedDriverUpiId || !directUpiIntentUrl) {
+      Alert.alert('UPI unavailable', 'Driver preferred UPI is not available yet.');
+      return;
+    }
+
+    if (!upiEnabled) {
+      Alert.alert('UPI unavailable', 'UPI unlocks once driver accepts your ride.');
+      return;
+    }
+
+    const launch = await openBestUpiApp(directUpiIntentUrl);
+    if (!launch.opened) {
+      Alert.alert('UPI app not found', 'Install a UPI app (Google Pay, PhonePe, Paytm, BHIM) and try again.');
+      return;
+    }
+
+    Alert.alert('UPI app opened', `Complete payment in ${launch.appLabel ?? 'your UPI app'}.`);
   };
 
   const onSubmit = async () => {
@@ -569,41 +599,36 @@ export function CustomerPaymentScreen({ navigation }: Props) {
     }
 
     if (selectedMethod !== 'DRIVER_UPI_DIRECT' && selectedMethod !== 'CASH' && !selectedWalletMethod) {
-      Alert.alert('Add payment method', 'Add a card or UPI ID in wallet before paying.');
+      Alert.alert('Add payment method', 'Add a UPI ID in wallet before paying.');
       return;
     }
 
     const usingDriverPreferredRail = selectedMethod === 'DRIVER_UPI_DIRECT';
     const usingCash = selectedMethod === 'CASH';
-    const usingWalletUpi =
-      !usingDriverPreferredRail && !usingCash && selectedWalletMethod?.type === 'UPI_ID';
+    const usingWalletUpi = !usingDriverPreferredRail && !usingCash;
 
     if ((usingDriverPreferredRail || usingWalletUpi) && !upiEnabled) {
       Alert.alert(
         'UPI available after driver acceptance',
-        'UPI unlocks once the driver accepts your ride. You can continue with card or cash for now.'
+        'UPI unlocks once the driver accepts your ride. You can continue with cash for now.'
       );
       return;
     }
 
     setSubmitting(true);
     try {
-      const provider = usingCash
-        ? 'WALLET'
-        : usingDriverPreferredRail
-          ? 'UPI'
-          : 'CASHFREE';
-      const applySurcharge = provider === 'CASHFREE' ? !usingWalletUpi : undefined;
+      const provider = usingCash ? 'WALLET' : 'UPI';
 
       const intent = await api.post('/payments/create-intent', {
         orderId,
         provider,
-        amount: provider === 'CASHFREE' ? (applySurcharge ? payableAmount : baseAmount) : baseAmount,
+        amount: baseAmount,
         driverPaymentMethodId: usingDriverPreferredRail ? selectedDriverPaymentMethod?.id : undefined,
         directPayToDriver: usingDriverPreferredRail,
         directUpiVpa: usingDriverPreferredRail ? resolvedDriverUpiId : undefined,
-        directUpiName: usingDriverPreferredRail ? driverDirectProfile.name : undefined,
-        applySurcharge
+        directUpiName: usingDriverPreferredRail ? driverDirectProfile.name : undefined
+      }, {
+        timeout: 20000
       });
 
       if (provider === 'WALLET') {
@@ -643,38 +668,6 @@ export function CustomerPaymentScreen({ navigation }: Props) {
             : 'Did your UPI app show payment success?'
         );
         providerReference = String(intent.data?.providerRef ?? `UPI_${Date.now()}`);
-      } else if (provider === 'CASHFREE') {
-        setSubmitting(false);
-        const checkoutUrl = intent.data?.checkoutUrl as string | undefined;
-        if (checkoutUrl) {
-          const canOpen = await Linking.canOpenURL(checkoutUrl);
-          if (canOpen) {
-            await Linking.openURL(checkoutUrl);
-          }
-        }
-        Alert.alert(
-          'Awaiting gateway confirmation',
-          'Complete payment in Cashfree and return. We will verify status automatically.'
-        );
-        const gatewayStatus = await waitForGatewayFinalStatus();
-        await Promise.allSettled([refreshOrder(), refreshTimeline()]);
-
-        if (gatewayStatus === 'CAPTURED') {
-          Alert.alert('Payment Complete', 'Payment verified by gateway.');
-          navigation.goBack();
-          return;
-        }
-
-        if (gatewayStatus === 'FAILED') {
-          Alert.alert('Payment failed', 'Gateway marked this payment as failed.');
-          return;
-        }
-
-        Alert.alert(
-          'Payment pending',
-          'Gateway confirmation is still pending. Please check again in a few moments.'
-        );
-        return;
       }
 
       setSubmitting(true);
@@ -682,6 +675,8 @@ export function CustomerPaymentScreen({ navigation }: Props) {
         paymentId: intent.data.paymentId,
         success,
         providerReference
+      }, {
+        timeout: 20000
       });
       await Promise.allSettled([refreshOrder(), refreshTimeline()]);
 
@@ -718,6 +713,20 @@ export function CustomerPaymentScreen({ navigation }: Props) {
             {!paymentPending ? <Text style={styles.summaryPaid}>Already paid</Text> : null}
           </View>
 
+          {driverProfileLoadError ? (
+            <View style={styles.loadErrorCard}>
+              <Text style={styles.loadErrorTitle}>Payment details delayed</Text>
+              <Text style={styles.loadErrorBody}>{driverProfileLoadError}</Text>
+              <Pressable
+                style={styles.loadErrorRetryButton}
+                onPress={() => void loadOrderPaymentProfile()}
+                disabled={loadingDriverProfile}
+              >
+                <Text style={styles.loadErrorRetryText}>{loadingDriverProfile ? 'Retrying...' : 'Retry now'}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           {selectedMethod === 'DRIVER_UPI_DIRECT' ? (
             <View style={styles.driverDirectCard}>
               <Text style={styles.sectionTitle}>Driver Direct UPI</Text>
@@ -726,7 +735,18 @@ export function CustomerPaymentScreen({ navigation }: Props) {
               ) : (
                 <>
                   <Text style={styles.infoLine}>Driver: {driverDirectProfile.name ?? 'Assigned driver'}</Text>
-                  <Text style={styles.infoLine}>UPI ID: {resolvedDriverUpiId ?? 'Not available'}</Text>
+                  <Text style={styles.infoLine}>Preferred UPI</Text>
+                  <Text style={styles.upiValue} selectable>
+                    {resolvedDriverUpiId ?? 'Not available'}
+                  </Text>
+                  <Text style={styles.upiHint}>Tap and hold UPI ID to copy</Text>
+                  <Pressable
+                    style={[styles.inlineActionButton, (!resolvedDriverUpiId || !upiEnabled) && styles.optionRowDisabled]}
+                    onPress={() => void openDriverUpiApp()}
+                    disabled={!resolvedDriverUpiId || !upiEnabled}
+                  >
+                    <Text style={styles.inlineActionButtonText}>Open UPI App</Text>
+                  </Pressable>
                   {driverDirectProfile.paymentMethods.length > 1 ? (
                     <View style={styles.driverMethodChipRow}>
                       {driverDirectProfile.paymentMethods.map((method) => {
@@ -821,15 +841,11 @@ export function CustomerPaymentScreen({ navigation }: Props) {
               </View>
               <Text style={styles.optionState}>{selectedMethod === 'CASH' ? 'Selected' : 'Choose'}</Text>
             </Pressable>
-
-            {isCardMethod ? (
-              <Text style={styles.surchargeNote}>Card processing fee 2.5% included: INR {cardSurchargeAmount.toFixed(2)}</Text>
-            ) : null}
           </View>
 
           <View style={styles.walletCard}>
             <Text style={styles.sectionTitle}>Wallet</Text>
-            <Text style={styles.defaultInfo}>Add cards or UPI ID and set one default method.</Text>
+            <Text style={styles.defaultInfo}>Add UPI IDs and set one default method.</Text>
 
             {walletMethods.map((method) => (
               <View key={`manage-${method.id}`} style={styles.walletMethodRow}>
@@ -860,30 +876,13 @@ export function CustomerPaymentScreen({ navigation }: Props) {
               </View>
             ))}
 
-            <View style={styles.addTypeRow}>
-              {(['UPI_ID', 'CREDIT_CARD', 'DEBIT_CARD'] as const).map((type) => {
-                const active = newWalletType === type;
-                return (
-                  <Pressable
-                    key={type}
-                    style={[styles.addTypeChip, active && styles.addTypeChipActive]}
-                    onPress={() => setNewWalletType(type)}
-                  >
-                    <Text style={[styles.addTypeChipText, active && styles.addTypeChipTextActive]}>
-                      {type === 'UPI_ID' ? 'UPI' : type === 'CREDIT_CARD' ? 'Credit Card' : 'Debit Card'}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
             <TextInput
               style={styles.input}
               value={newWalletValue}
               onChangeText={setNewWalletValue}
               autoCapitalize="none"
-              keyboardType={newWalletType === 'UPI_ID' ? 'default' : 'number-pad'}
-              placeholder={newWalletType === 'UPI_ID' ? 'name@bank' : 'Last 4 digits'}
+              keyboardType="default"
+              placeholder="name@bank"
               placeholderTextColor="#64748B"
             />
             <TextInput
@@ -994,6 +993,38 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_700Bold',
     fontSize: 12
   },
+  loadErrorCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FFF1F2',
+    padding: 10,
+    gap: 6
+  },
+  loadErrorTitle: {
+    color: '#9F1239',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 13
+  },
+  loadErrorBody: {
+    color: '#9F1239',
+    fontFamily: 'Manrope_500Medium',
+    fontSize: 12
+  },
+  loadErrorRetryButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#F43F5E',
+    backgroundColor: '#FFE4E6',
+    paddingHorizontal: 10,
+    paddingVertical: 6
+  },
+  loadErrorRetryText: {
+    color: '#BE123C',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 11
+  },
   sectionTitle: {
     color: '#0F172A',
     fontFamily: 'Sora_700Bold',
@@ -1016,6 +1047,30 @@ const styles = StyleSheet.create({
     color: '#334155',
     fontFamily: 'Manrope_600SemiBold',
     fontSize: 12
+  },
+  upiValue: {
+    color: '#0F172A',
+    fontFamily: 'Sora_700Bold',
+    fontSize: 15
+  },
+  upiHint: {
+    color: '#64748B',
+    fontFamily: 'Manrope_500Medium',
+    fontSize: 11
+  },
+  inlineActionButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6
+  },
+  inlineActionButtonText: {
+    color: '#1D4ED8',
+    fontFamily: 'Manrope_700Bold',
+    fontSize: 11
   },
   driverMethodChipRow: {
     marginTop: 2,
@@ -1088,12 +1143,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_700Bold',
     fontSize: 11
   },
-  surchargeNote: {
-    marginTop: 2,
-    color: '#1E3A8A',
-    fontFamily: 'Manrope_600SemiBold',
-    fontSize: 11
-  },
   walletCard: {
     borderRadius: 14,
     borderWidth: 1,
@@ -1159,31 +1208,6 @@ const styles = StyleSheet.create({
     color: '#1D4ED8',
     fontFamily: 'Manrope_700Bold',
     fontSize: 10
-  },
-  addTypeRow: {
-    flexDirection: 'row',
-    gap: 6,
-    flexWrap: 'wrap'
-  },
-  addTypeChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 10,
-    paddingVertical: 5
-  },
-  addTypeChipActive: {
-    borderColor: '#1D4ED8',
-    backgroundColor: '#DBEAFE'
-  },
-  addTypeChipText: {
-    color: '#475569',
-    fontFamily: 'Manrope_700Bold',
-    fontSize: 11
-  },
-  addTypeChipTextActive: {
-    color: '#1E3A8A'
   },
   input: {
     borderWidth: 1,

@@ -47,6 +47,7 @@ function readableDate(value: string) {
 export function CustomerRidesScreen({ navigation }: Props) {
   const user = useSessionStore((state) => state.user);
   const activeOrderId = useCustomerStore((state) => state.activeOrderId);
+  const activeOrderStatus = useCustomerStore((state) => state.activeOrderStatus);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -75,6 +76,25 @@ export function CustomerRidesScreen({ navigation }: Props) {
   useEffect(() => {
     void loadOrders();
   }, [loadOrders]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      return;
+    }
+    void loadOrders();
+  }, [activeOrderId, activeOrderStatus, loadOrders, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void loadOrders();
+    }, 12000);
+
+    return () => clearInterval(interval);
+  }, [loadOrders, user?.id]);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredOrders = useMemo(() => {

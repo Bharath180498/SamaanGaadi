@@ -24,8 +24,11 @@ import { useDriverSessionStore } from '../store/useDriverSessionStore';
 import { useDriverUxStore } from '../store/useDriverUxStore';
 import { SupportFab } from '../components/SupportFab';
 import { useDriverI18n } from '../i18n/useDriverI18n';
+import { driverNavigationRef } from './driverNavigationRef';
 
 const Tab = createBottomTabNavigator<DriverTabParamList>();
+const RIDE_ESCAPE_SECONDS = 10;
+const RIDE_WARNING_STEPS = new Set([7, 4, 2]);
 type TabPressEvent = {
   preventDefault: () => void;
   defaultPrevented?: boolean;
@@ -46,10 +49,13 @@ export function DriverTabs() {
   const isOfferTrackerReady = useRef(false);
   const [activeTab, setActiveTab] = useState<keyof DriverTabParamList>('Home');
   const [focusModalVisible, setFocusModalVisible] = useState(false);
+  const [rideEscapeSecondsLeft, setRideEscapeSecondsLeft] = useState(RIDE_ESCAPE_SECONDS);
   const [verifiedCelebrationVisible, setVerifiedCelebrationVisible] = useState(false);
   const [tourVisible, setTourVisible] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState(0);
   const lastFocusedTripId = useRef<string | undefined>(undefined);
+  const rideEscapeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const rideWarningSecondRef = useRef<number | null>(null);
   const tourAdvanceLockRef = useRef<number | null>(null);
   const tourAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const simpleMode = useDriverUxStore((state) => state.simpleMode);
@@ -120,6 +126,15 @@ export function DriverTabs() {
   );
   const tourArrowLeft = Math.max(18, Math.min(tourTooltipWidth - 18, targetTabCenterX - tourTooltipLeft));
 
+  const returnToActiveRide = () => {
+    setRideEscapeSecondsLeft(RIDE_ESCAPE_SECONDS);
+    rideWarningSecondRef.current = null;
+    if (driverNavigationRef.isReady()) {
+      driverNavigationRef.navigate('Home');
+    }
+    setFocusModalVisible(false);
+  };
+
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
@@ -157,12 +172,15 @@ export function DriverTabs() {
     if (!tripFocusModeEnabled || !currentJobId) {
       lastFocusedTripId.current = undefined;
       setFocusModalVisible(false);
+      setRideEscapeSecondsLeft(RIDE_ESCAPE_SECONDS);
+      rideWarningSecondRef.current = null;
       return;
     }
 
     if (lastFocusedTripId.current !== currentJobId) {
       lastFocusedTripId.current = currentJobId;
       setFocusModalVisible(true);
+      returnToActiveRide();
     }
   }, [currentJobId, tripFocusModeEnabled]);
 
@@ -173,8 +191,57 @@ export function DriverTabs() {
 
     if (activeTab !== 'Home' && activeTab !== 'Support') {
       setFocusModalVisible(true);
+      returnToActiveRide();
     }
   }, [activeTab, tripFocusModeEnabled]);
+
+  useEffect(() => {
+    if (rideEscapeTimerRef.current) {
+      clearInterval(rideEscapeTimerRef.current);
+      rideEscapeTimerRef.current = null;
+    }
+
+    if (!tripFocusModeEnabled || activeTab === 'Home') {
+      setRideEscapeSecondsLeft(RIDE_ESCAPE_SECONDS);
+      rideWarningSecondRef.current = null;
+      return;
+    }
+
+    setRideEscapeSecondsLeft(RIDE_ESCAPE_SECONDS);
+    rideWarningSecondRef.current = null;
+
+    rideEscapeTimerRef.current = setInterval(() => {
+      setRideEscapeSecondsLeft((previous) => Math.max(0, previous - 1));
+    }, 1000);
+
+    return () => {
+      if (rideEscapeTimerRef.current) {
+        clearInterval(rideEscapeTimerRef.current);
+        rideEscapeTimerRef.current = null;
+      }
+    };
+  }, [activeTab, tripFocusModeEnabled]);
+
+  useEffect(() => {
+    if (!tripFocusModeEnabled || activeTab === 'Home') {
+      return;
+    }
+
+    if (
+      RIDE_WARNING_STEPS.has(rideEscapeSecondsLeft) &&
+      rideWarningSecondRef.current !== rideEscapeSecondsLeft
+    ) {
+      rideWarningSecondRef.current = rideEscapeSecondsLeft;
+      Vibration.vibrate(100);
+    }
+
+    if (rideEscapeSecondsLeft > 0) {
+      return;
+    }
+
+    Alert.alert(t('nav.focus.returnedTitle'), t('nav.focus.returnedBody'));
+    returnToActiveRide();
+  }, [activeTab, rideEscapeSecondsLeft, t, tripFocusModeEnabled]);
 
   useEffect(() => {
     if (onboardingStatus !== 'APPROVED') {
@@ -310,7 +377,7 @@ export function DriverTabs() {
     <>
       <Tab.Navigator
         screenListeners={{
-          state: (event) => {
+          state: (event: { data: { state?: { index?: number; routes?: Array<{ name?: string }> } } }) => {
             const navState = event.data.state as
               | {
                   index?: number;
@@ -337,7 +404,8 @@ export function DriverTabs() {
           tabBarStyle: {
             borderTopWidth: 1,
             borderTopColor: '#BFDBFE',
-            backgroundColor: '#EFF6FF'
+            backgroundColor: '#EFF6FF',
+            display: tripFocusModeEnabled ? 'none' : 'flex'
           },
           tabBarLabelStyle: {
             fontFamily: typography.body,
@@ -388,6 +456,18 @@ export function DriverTabs() {
           options={{ tabBarLabel: t('nav.tabs.profile') }}
         />
       </Tab.Navigator>
+      {tripFocusModeEnabled && activeTab !== 'Home' ? (
+        <View pointerEvents="box-none" style={styles.escapeOverlayRoot}>
+          <View style={styles.escapeBar}>
+            <Pressable style={styles.escapeBackButton} onPress={returnToActiveRide}>
+              <Text style={styles.escapeBackButtonText}>{t('nav.focus.openRide')}</Text>
+            </Pressable>
+            <Text style={styles.escapeWarningText}>
+              {t('nav.focus.returnCountdown', { seconds: rideEscapeSecondsLeft })}
+            </Text>
+          </View>
+        </View>
+      ) : null}
       <Modal
         animationType="fade"
         transparent
@@ -495,12 +575,46 @@ export function DriverTabs() {
           </View>
         </View>
       ) : null}
-      <SupportFab />
+      {!tripFocusModeEnabled ? <SupportFab /> : null}
     </>
   );
 }
 
 const styles = StyleSheet.create({
+  escapeOverlayRoot: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-start'
+  },
+  escapeBar: {
+    marginTop: 8,
+    marginHorizontal: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#2563EB',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6
+  },
+  escapeBackButton: {
+    alignSelf: 'flex-start',
+    minHeight: 36,
+    borderRadius: 999,
+    backgroundColor: '#1D4ED8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14
+  },
+  escapeBackButtonText: {
+    fontFamily: typography.bodyBold,
+    color: '#EFF6FF',
+    fontSize: 12
+  },
+  escapeWarningText: {
+    fontFamily: typography.bodyBold,
+    color: '#1E3A8A',
+    fontSize: 12
+  },
   focusBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(2, 6, 23, 0.74)',

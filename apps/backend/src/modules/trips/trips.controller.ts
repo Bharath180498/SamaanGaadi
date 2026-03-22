@@ -26,7 +26,7 @@ export class TripsController {
 
   @Post(':tripId/start-loading')
   startLoading(@Param('tripId') tripId: string, @Body() payload: TripDriverActionDto) {
-    return this.tripsService.startLoading(tripId, payload.driverId);
+    return this.tripsService.startLoading(tripId, payload.driverId, payload.rideStartOtp);
   }
 
   @Post(':tripId/start-transit')

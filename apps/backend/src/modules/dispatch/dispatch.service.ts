@@ -17,12 +17,22 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { RedisService } from '../../common/redis/redis.service';
 import { RouteEtaService } from './route-eta.service';
+import {
+  buildTripStartOtpRedisKey,
+  generateTripStartOtpCode,
+  TRIP_START_OTP_TTL_SECONDS
+} from '../../common/utils/trip-start-otp.util';
 
 interface CandidateScore {
   etaScore: number;
   ratingScore: number;
   idleScore: number;
   vehicleFitScore: number;
+  assignmentPenalty: number;
+  reliabilityPenalty: number;
+  freshnessPenalty: number;
+  availabilityPenalty: number;
+  finalPenalty: number;
   total: number;
 }
 
@@ -35,6 +45,11 @@ interface DispatchCandidate {
   distanceKm: number;
   routeEtaMinutes: number;
   routeProvider: 'google' | 'mock';
+  lastActiveAt: Date | null;
+  recentAssignmentsLast60m?: number;
+  recentOfferMissesLast24h?: number;
+  hasQueuedOrder?: boolean;
+  pendingOfferCount?: number;
   score: CandidateScore;
 }
 
@@ -56,6 +71,14 @@ export class DispatchService {
 
   private get offerExpirySeconds() {
     return 120;
+  }
+
+  private get busyFallbackMaxEtaMinutes() {
+    return 18;
+  }
+
+  private get busyFallbackMaxDistanceKm() {
+    return this.dispatchRadiusKm;
   }
 
   private get redis() {
@@ -123,8 +146,147 @@ export class DispatchService {
       ratingScore: Number(ratingScore.toFixed(4)),
       idleScore: Number(idleScore.toFixed(4)),
       vehicleFitScore,
+      assignmentPenalty: 0,
+      reliabilityPenalty: 0,
+      freshnessPenalty: 0,
+      availabilityPenalty: 0,
+      finalPenalty: 0,
       total: Number(total.toFixed(4))
     };
+  }
+
+  private async applyFairnessAdjustments(candidates: DispatchCandidate[]) {
+    if (candidates.length === 0) {
+      return candidates;
+    }
+
+    const driverIds = [...new Set(candidates.map((candidate) => candidate.driverId))];
+    const assignmentSince = new Date(Date.now() - 60 * 60 * 1000);
+    const missesSince = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [recentAssignments, recentMisses] = await Promise.all([
+      this.prisma.trip.groupBy({
+        by: ['driverId'],
+        where: {
+          driverId: {
+            in: driverIds
+          },
+          createdAt: {
+            gte: assignmentSince
+          },
+          status: {
+            in: [
+              TripStatus.ASSIGNED,
+              TripStatus.DRIVER_EN_ROUTE,
+              TripStatus.ARRIVED_PICKUP,
+              TripStatus.LOADING,
+              TripStatus.IN_TRANSIT,
+              TripStatus.COMPLETED
+            ]
+          }
+        },
+        _count: {
+          _all: true
+        }
+      }),
+      this.prisma.tripOffer.groupBy({
+        by: ['driverId'],
+        where: {
+          driverId: {
+            in: driverIds
+          },
+          status: {
+            in: [TripOfferStatus.REJECTED, TripOfferStatus.EXPIRED]
+          },
+          respondedAt: {
+            gte: missesSince
+          }
+        },
+        _count: {
+          _all: true
+        }
+      })
+    ]);
+
+    const recentAssignmentMap = new Map(
+      recentAssignments.map((entry) => [entry.driverId, entry._count._all])
+    );
+    const recentMissMap = new Map(recentMisses.map((entry) => [entry.driverId, entry._count._all]));
+
+    return candidates
+      .map((candidate) => {
+        const assignmentCount = recentAssignmentMap.get(candidate.driverId) ?? 0;
+        const missCount = recentMissMap.get(candidate.driverId) ?? 0;
+
+        const assignmentPenalty = Math.min(0.22, assignmentCount * 0.04);
+        const reliabilityPenalty = Math.min(0.12, missCount * 0.02);
+        const freshnessPenalty = (() => {
+          if (!candidate.lastActiveAt) {
+            return 0.08;
+          }
+          const minutesSinceActive = (Date.now() - candidate.lastActiveAt.getTime()) / (60 * 1000);
+          if (minutesSinceActive <= 5) {
+            return 0;
+          }
+          return Math.min(0.14, ((minutesSinceActive - 5) / 15) * 0.14);
+        })();
+        const availabilityPenalty =
+          candidate.availabilityStatus === AvailabilityStatus.BUSY ? 0.06 : 0;
+
+        const finalPenalty = assignmentPenalty + reliabilityPenalty + freshnessPenalty + availabilityPenalty;
+        const adjustedTotal = Math.max(0, Math.min(1, candidate.score.total - finalPenalty));
+
+        return {
+          ...candidate,
+          recentAssignmentsLast60m: assignmentCount,
+          recentOfferMissesLast24h: missCount,
+          score: {
+            ...candidate.score,
+            assignmentPenalty: Number(assignmentPenalty.toFixed(4)),
+            reliabilityPenalty: Number(reliabilityPenalty.toFixed(4)),
+            freshnessPenalty: Number(freshnessPenalty.toFixed(4)),
+            availabilityPenalty: Number(availabilityPenalty.toFixed(4)),
+            finalPenalty: Number(finalPenalty.toFixed(4)),
+            total: Number(adjustedTotal.toFixed(4))
+          }
+        };
+      })
+      .sort((a, b) => b.score.total - a.score.total);
+  }
+
+  private async decorateQueueAndPendingState(candidates: DispatchCandidate[]) {
+    if (candidates.length === 0) {
+      return candidates;
+    }
+
+    const driverIds = [...new Set(candidates.map((candidate) => candidate.driverId))];
+    const queueKeys = driverIds.map((driverId) => `driver:${driverId}:next-order`);
+    const queueValues = queueKeys.length > 0 ? await this.redis.mget(...queueKeys) : [];
+    const queuedMap = new Map(driverIds.map((driverId, index) => [driverId, Boolean(queueValues[index])]));
+
+    const pendingOffers = await this.prisma.tripOffer.groupBy({
+      by: ['driverId'],
+      where: {
+        driverId: {
+          in: driverIds
+        },
+        status: TripOfferStatus.PENDING,
+        expiresAt: {
+          gt: new Date()
+        }
+      },
+      _count: {
+        _all: true
+      }
+    });
+
+    const pendingOfferMap = new Map(pendingOffers.map((entry) => [entry.driverId, entry._count._all]));
+
+    return candidates.map((candidate) => ({
+      ...candidate,
+      hasQueuedOrder: queuedMap.get(candidate.driverId) ?? false,
+      pendingOfferCount: pendingOfferMap.get(candidate.driverId) ?? 0
+    }));
   }
 
   private async buildCandidates(order: Order): Promise<DispatchCandidate[]> {
@@ -166,14 +328,17 @@ export class DispatchService {
           distanceKm: Number((driver.distanceKm ?? eta.distanceKm).toFixed(2)),
           routeEtaMinutes: eta.etaMinutes,
           routeProvider: eta.provider,
+          lastActiveAt: driver.lastActiveAt ?? null,
           score
         } satisfies DispatchCandidate;
       })
     );
 
-    return candidates
-      .filter((candidate): candidate is DispatchCandidate => candidate !== null)
-      .sort((a, b) => b.score.total - a.score.total);
+    const filtered = candidates.filter(
+      (candidate): candidate is DispatchCandidate => candidate !== null
+    );
+    const fairnessAdjusted = await this.applyFairnessAdjustments(filtered);
+    return this.decorateQueueAndPendingState(fairnessAdjusted);
   }
 
   private async logDecision(data: {
@@ -277,17 +442,44 @@ export class DispatchService {
 
   private async createNextOffer(order: Order, excludedDriverIds: string[]) {
     const candidates = await this.buildCandidates(order);
-    const candidate = candidates.find(
+    const eligibleCandidates = candidates.filter(
       (item) =>
-        item.availabilityStatus === AvailabilityStatus.ONLINE &&
         !excludedDriverIds.includes(item.driverId)
     );
+
+    const onlineCandidate = eligibleCandidates.find(
+      (item) => item.availabilityStatus === AvailabilityStatus.ONLINE
+    );
+    const busyFallbackCandidate = eligibleCandidates.find(
+      (item) =>
+        item.availabilityStatus === AvailabilityStatus.BUSY &&
+        item.routeEtaMinutes <= this.busyFallbackMaxEtaMinutes &&
+        item.distanceKm <= this.busyFallbackMaxDistanceKm &&
+        !item.hasQueuedOrder &&
+        (item.pendingOfferCount ?? 0) === 0
+    );
+    const candidate = onlineCandidate ?? busyFallbackCandidate;
 
     if (!candidate) {
       await this.logDecision({
         orderId: order.id,
         assignmentMode: 'NO_OFFER',
-        reason: 'No qualified online candidates available'
+        decisionPayload: {
+          excludedDrivers: excludedDriverIds.length,
+          eligibleCandidates: eligibleCandidates.length,
+          onlineCandidates: eligibleCandidates.filter(
+            (entry) => entry.availabilityStatus === AvailabilityStatus.ONLINE
+          ).length,
+          busyFallbackCandidates: eligibleCandidates.filter(
+            (entry) =>
+              entry.availabilityStatus === AvailabilityStatus.BUSY &&
+              entry.routeEtaMinutes <= this.busyFallbackMaxEtaMinutes &&
+              entry.distanceKm <= this.busyFallbackMaxDistanceKm &&
+              !entry.hasQueuedOrder &&
+              (entry.pendingOfferCount ?? 0) === 0
+          ).length
+        },
+        reason: 'No qualified online candidate and no queue-eligible busy fallback candidate'
       });
       return null;
     }
@@ -295,7 +487,12 @@ export class DispatchService {
     return this.createOffer({
       order,
       candidate,
-      mode: excludedDriverIds.length > 0 ? 'REASSIGNMENT' : 'NEW_ASSIGNMENT'
+      mode:
+        candidate.availabilityStatus === AvailabilityStatus.BUSY
+          ? 'QUEUE_OFFER'
+          : excludedDriverIds.length > 0
+            ? 'REASSIGNMENT'
+            : 'NEW_ASSIGNMENT'
     });
   }
 
@@ -499,6 +696,13 @@ export class DispatchService {
         }
       }
     });
+
+    await this.redis.set(
+      buildTripStartOtpRedisKey(result.trip.id),
+      generateTripStartOtpCode(),
+      'EX',
+      TRIP_START_OTP_TTL_SECONDS
+    );
 
     if (hasCurrentTrip > 0) {
       await this.redis.set(`driver:${driverId}:next-order`, order.id, 'EX', 45 * 60);

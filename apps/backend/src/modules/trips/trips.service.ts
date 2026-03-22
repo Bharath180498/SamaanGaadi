@@ -16,6 +16,12 @@ import { CompleteTripDto } from './dto/complete-trip.dto';
 import { RateTripDto } from './dto/rate-trip.dto';
 import { GenerateDeliveryProofUploadUrlDto } from './dto/generate-delivery-proof-upload-url.dto';
 import { buildS3UploadUrl } from '../../common/utils/s3-upload.util';
+import { RedisService } from '../../common/redis/redis.service';
+import {
+  buildTripStartOtpRedisKey,
+  generateTripStartOtpCode,
+  TRIP_START_OTP_TTL_SECONDS
+} from '../../common/utils/trip-start-otp.util';
 
 @Injectable()
 export class TripsService {
@@ -26,8 +32,13 @@ export class TripsService {
     private readonly configService: ConfigService,
     private readonly notificationsService: NotificationsService,
     private readonly realtimeService: RealtimeService,
-    private readonly dispatchService: DispatchService
+    private readonly dispatchService: DispatchService,
+    private readonly redisService: RedisService
   ) {}
+
+  private get redis() {
+    return this.redisService.getClient();
+  }
 
   private get waitingRate() {
     return this.configService.get<number>('waitingRatePerMinute') ?? 3;
@@ -177,6 +188,45 @@ export class TripsService {
     }
   }
 
+  private normalizeTripStartOtp(otp: string | null | undefined) {
+    const value = (otp ?? '').trim();
+    return /^\d{6}$/.test(value) ? value : '';
+  }
+
+  private async ensureTripStartOtp(tripId: string) {
+    const key = buildTripStartOtpRedisKey(tripId);
+    const existing = this.normalizeTripStartOtp(await this.redis.get(key));
+    if (existing) {
+      return existing;
+    }
+
+    const nextOtp = generateTripStartOtpCode();
+    await this.redis.set(key, nextOtp, 'EX', TRIP_START_OTP_TTL_SECONDS);
+    return nextOtp;
+  }
+
+  private async assertTripStartOtp(tripId: string, providedOtp: string | undefined) {
+    const normalized = this.normalizeTripStartOtp(providedOtp);
+    if (!normalized) {
+      throw new BadRequestException('Enter the 6-digit ride start OTP from customer');
+    }
+
+    const key = buildTripStartOtpRedisKey(tripId);
+    const expected = this.normalizeTripStartOtp(await this.redis.get(key));
+    if (!expected) {
+      await this.ensureTripStartOtp(tripId);
+      throw new BadRequestException(
+        'Ride start OTP expired. Ask customer to refresh and share the latest OTP.'
+      );
+    }
+
+    if (expected !== normalized) {
+      throw new BadRequestException('Ride start OTP does not match. Please retry with the latest OTP.');
+    }
+
+    await this.redis.del(key);
+  }
+
   async generateDeliveryProofUploadUrl(
     tripId: string,
     payload: GenerateDeliveryProofUploadUrlDto
@@ -261,6 +311,7 @@ export class TripsService {
   async arrivedPickup(tripId: string, driverId: string) {
     const trip = await this.getTrip(tripId);
     this.assertDriver(trip.driverId, driverId);
+    await this.ensureTripStartOtp(trip.id);
 
     const [updatedTrip] = await this.prisma.$transaction([
       this.prisma.trip.update({
@@ -291,9 +342,10 @@ export class TripsService {
     return updatedTrip;
   }
 
-  async startLoading(tripId: string, driverId: string) {
+  async startLoading(tripId: string, driverId: string, rideStartOtp?: string) {
     const trip = await this.getTrip(tripId);
     this.assertDriver(trip.driverId, driverId);
+    await this.assertTripStartOtp(trip.id, rideStartOtp);
 
     const [updatedTrip] = await this.prisma.$transaction([
       this.prisma.trip.update({

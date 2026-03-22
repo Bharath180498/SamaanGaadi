@@ -48,6 +48,8 @@ interface TimelineBucket {
   rides: number;
 }
 
+const RIDES_PER_PAGE = 6;
+
 function parseMoney(value: unknown) {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(parsed)) {
@@ -244,6 +246,8 @@ export function EarningsScreen() {
   const [updatingPlan, setUpdatingPlan] = useState(false);
   const [enterpriseNotes, setEnterpriseNotes] = useState('');
   const [fleetSize, setFleetSize] = useState('');
+  const [rideSearchQuery, setRideSearchQuery] = useState('');
+  const [ridePage, setRidePage] = useState(1);
 
   const loadWindowData = useCallback(
     async (window: EarningsWindow) => {
@@ -425,6 +429,44 @@ export function EarningsScreen() {
       }, 0),
     [timeline]
   );
+  const normalizedRideSearchQuery = useMemo(() => rideSearchQuery.trim().toLowerCase(), [rideSearchQuery]);
+  const filteredTrips = useMemo(() => {
+    if (!normalizedRideSearchQuery) {
+      return trips;
+    }
+    return trips.filter((trip) => {
+      const payout = payoutForTrip(trip).toFixed(2);
+      const deliveredAtLabel = formatDateTime(trip.deliveredAt, '').toLowerCase();
+      const distanceLabel = typeof trip.distanceKm === 'number' ? trip.distanceKm.toFixed(1) : '';
+      const durationLabel = typeof trip.durationMinutes === 'number' ? String(trip.durationMinutes) : '';
+
+      return (
+        trip.tripId.toLowerCase().includes(normalizedRideSearchQuery) ||
+        trip.orderId.toLowerCase().includes(normalizedRideSearchQuery) ||
+        payout.includes(normalizedRideSearchQuery) ||
+        deliveredAtLabel.includes(normalizedRideSearchQuery) ||
+        distanceLabel.includes(normalizedRideSearchQuery) ||
+        durationLabel.includes(normalizedRideSearchQuery)
+      );
+    });
+  }, [normalizedRideSearchQuery, trips]);
+  const totalRidePages = Math.max(1, Math.ceil(filteredTrips.length / RIDES_PER_PAGE));
+  const paginatedTrips = useMemo(() => {
+    const startIndex = (ridePage - 1) * RIDES_PER_PAGE;
+    return filteredTrips.slice(startIndex, startIndex + RIDES_PER_PAGE);
+  }, [filteredTrips, ridePage]);
+  const rideListStart = filteredTrips.length === 0 ? 0 : (ridePage - 1) * RIDES_PER_PAGE + 1;
+  const rideListEnd = Math.min(ridePage * RIDES_PER_PAGE, filteredTrips.length);
+
+  useEffect(() => {
+    setRidePage(1);
+  }, [normalizedRideSearchQuery, selectedWindow]);
+
+  useEffect(() => {
+    if (ridePage > totalRidePages) {
+      setRidePage(totalRidePages);
+    }
+  }, [ridePage, totalRidePages]);
 
   const executePlanChange = async (plan: 'GO' | 'PRO' | 'ENTERPRISE') => {
     if (updatingPlan) {
@@ -599,10 +641,31 @@ export function EarningsScreen() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('earnings.rideWiseTitle', { count: tripCount })}</Text>
           <Text style={styles.subscriptionHint}>{t('earnings.rideWiseSub')}</Text>
+          <TextInput
+            style={[styles.input, styles.rideSearchInput]}
+            value={rideSearchQuery}
+            onChangeText={setRideSearchQuery}
+            placeholder={t('earnings.rideWiseSearchPlaceholder')}
+            placeholderTextColor={colors.mutedText}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {filteredTrips.length > 0 ? (
+            <Text style={styles.ridePageSummary}>
+              {t('earnings.rideWisePageSummary', {
+                start: rideListStart,
+                end: rideListEnd,
+                total: filteredTrips.length
+              })}
+            </Text>
+          ) : null}
           {trips.length === 0 ? (
             <Text style={styles.emptyHint}>{t('earnings.rideWiseEmpty')}</Text>
+          ) : filteredTrips.length === 0 ? (
+            <Text style={styles.emptyHint}>{t('earnings.rideWiseNoResults')}</Text>
           ) : null}
-          {trips.map((trip) => {
+          {paginatedTrips.map((trip) => {
             const payout = payoutForTrip(trip);
             return (
               <View key={trip.tripId} style={styles.tripRow}>
@@ -635,6 +698,44 @@ export function EarningsScreen() {
               </View>
             );
           })}
+          {filteredTrips.length > RIDES_PER_PAGE ? (
+            <View style={styles.paginationRow}>
+              <Pressable
+                style={[styles.paginationButton, ridePage === 1 && styles.paginationButtonDisabled]}
+                onPress={() => setRidePage((current) => Math.max(1, current - 1))}
+                disabled={ridePage === 1}
+              >
+                <Text
+                  style={[
+                    styles.paginationButtonLabel,
+                    ridePage === 1 && styles.paginationButtonLabelDisabled
+                  ]}
+                >
+                  {t('earnings.paginationPrevious')}
+                </Text>
+              </Pressable>
+              <Text style={styles.paginationLabel}>
+                {t('earnings.paginationLabel', {
+                  page: ridePage,
+                  total: totalRidePages
+                })}
+              </Text>
+              <Pressable
+                style={[styles.paginationButton, ridePage === totalRidePages && styles.paginationButtonDisabled]}
+                onPress={() => setRidePage((current) => Math.min(totalRidePages, current + 1))}
+                disabled={ridePage === totalRidePages}
+              >
+                <Text
+                  style={[
+                    styles.paginationButtonLabel,
+                    ridePage === totalRidePages && styles.paginationButtonLabelDisabled
+                  ]}
+                >
+                  {t('earnings.paginationNext')}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.card}>
@@ -980,6 +1081,43 @@ const styles = StyleSheet.create({
   inputMultiline: {
     minHeight: 82,
     textAlignVertical: 'top'
+  },
+  rideSearchInput: {
+    marginTop: spacing.xs
+  },
+  ridePageSummary: {
+    fontFamily: typography.body,
+    color: colors.mutedText
+  },
+  paginationRow: {
+    marginTop: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.xs
+  },
+  paginationButton: {
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.paper
+  },
+  paginationButtonDisabled: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#D9E2FF'
+  },
+  paginationButtonLabel: {
+    fontFamily: typography.bodyBold,
+    color: colors.primary
+  },
+  paginationButtonLabelDisabled: {
+    color: colors.mutedText
+  },
+  paginationLabel: {
+    fontFamily: typography.body,
+    color: colors.mutedText
   },
   enterpriseStatusBox: {
     marginTop: spacing.xs,

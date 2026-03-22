@@ -27,7 +27,8 @@
       ]
     },
     "plugins": [
-      "expo-notifications"
+      "expo-notifications",
+      "expo-asset"
     ],
     "extra": {
       "apiBaseUrl": "https://backend-production-0ee70.up.railway.app/api",

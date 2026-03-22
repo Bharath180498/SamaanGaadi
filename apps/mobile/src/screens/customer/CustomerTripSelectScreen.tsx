@@ -51,8 +51,6 @@ const MOBILE_GOOGLE_MAPS_API_KEY =
 type Props = NativeStackScreenProps<RootStackParamList, 'CustomerTripSelect'>;
 
 const FALLBACK_PAYMENT_LABELS: Record<PaymentMethod, string> = {
-  VISA_5496: 'Visa ....5496',
-  MASTERCARD_6802: 'Mastercard ....6802',
   UPI_SCAN_PAY: 'UPI Scan and Pay',
   DRIVER_UPI_DIRECT: 'Driver UPI (direct)',
   CASH: 'Cash on delivery'
@@ -390,26 +388,14 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
     walletMethods.find((method) => method.id === defaultWalletMethodId && method.type === 'UPI_ID') ??
     walletMethods.find((method) => method.isDefault && method.type === 'UPI_ID') ??
     walletMethods.find((method) => method.type === 'UPI_ID');
-  const selectedCardWalletMethod =
-    walletMethods.find((method) => method.id === defaultWalletMethodId && method.type !== 'UPI_ID') ??
-    walletMethods.find((method) => method.isDefault && method.type !== 'UPI_ID') ??
-    walletMethods.find((method) => method.type !== 'UPI_ID');
   const selectedPaymentLabel =
     paymentMethod === 'CASH'
       ? FALLBACK_PAYMENT_LABELS.CASH
       : paymentMethod === 'DRIVER_UPI_DIRECT'
         ? FALLBACK_PAYMENT_LABELS.DRIVER_UPI_DIRECT
-        : paymentMethod === 'UPI_SCAN_PAY'
-          ? selectedUpiWalletMethod
-            ? walletMethodLabel(selectedUpiWalletMethod)
-            : FALLBACK_PAYMENT_LABELS.UPI_SCAN_PAY
-          : selectedCardWalletMethod
-            ? walletMethodLabel(selectedCardWalletMethod)
-            : FALLBACK_PAYMENT_LABELS[paymentMethod];
-  const cardSurchargeNote =
-    paymentMethod === 'VISA_5496' || paymentMethod === 'MASTERCARD_6802'
-      ? 'Card payments include a 2.5% processing surcharge'
-      : null;
+        : selectedUpiWalletMethod
+          ? walletMethodLabel(selectedUpiWalletMethod)
+          : FALLBACK_PAYMENT_LABELS.UPI_SCAN_PAY;
   const cheapestTotal = useMemo(() => {
     if (quotes.length === 0) {
       return undefined;
@@ -924,7 +910,6 @@ export function CustomerTripSelectScreen({ navigation }: Props) {
                 </View>
                 <View>
                   <Text style={styles.paymentLabel}>{selectedPaymentLabel}</Text>
-                  {cardSurchargeNote ? <Text style={styles.paymentSubLabel}>{cardSurchargeNote}</Text> : null}
                 </View>
               </View>
             <Text style={styles.routeArrow}>{'>'}</Text>

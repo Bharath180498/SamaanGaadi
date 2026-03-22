@@ -24,30 +24,24 @@ export interface RoutePoint {
 }
 
 export type PaymentMethod =
-  | 'VISA_5496'
-  | 'MASTERCARD_6802'
   | 'UPI_SCAN_PAY'
   | 'DRIVER_UPI_DIRECT'
   | 'CASH';
 
-export type CustomerWalletMethodType = 'CREDIT_CARD' | 'DEBIT_CARD' | 'UPI_ID';
+export type CustomerWalletMethodType = 'UPI_ID';
 
 export interface CustomerWalletMethod {
   id: string;
   type: CustomerWalletMethodType;
   label: string;
-  cardLast4?: string;
   upiId?: string;
   isDefault: boolean;
 }
 
 const UPI_PATTERN = /^[a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,}$/i;
 
-function walletTypeToPaymentMethod(type: CustomerWalletMethodType): PaymentMethod {
-  if (type === 'UPI_ID') {
-    return 'UPI_SCAN_PAY';
-  }
-  return 'VISA_5496';
+function walletTypeToPaymentMethod(_type: CustomerWalletMethodType): PaymentMethod {
+  return 'UPI_SCAN_PAY';
 }
 
 interface CustomerState {
@@ -99,7 +93,6 @@ interface CustomerState {
   addWalletMethod: (input: {
     type: CustomerWalletMethodType;
     label?: string;
-    cardLast4?: string;
     upiId?: string;
     setAsDefault?: boolean;
   }) => void;
@@ -156,17 +149,9 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
   invoiceValue: DEFAULTS.invoiceValue,
   autoGenerateEwayBill: DEFAULTS.autoGenerateEwayBill,
   generatedEwayBillNumber: undefined,
-  paymentMethod: 'VISA_5496',
-  walletMethods: [
-    {
-      id: 'wallet-card-5496',
-      type: 'CREDIT_CARD',
-      label: 'Credit Card •••• 5496',
-      cardLast4: '5496',
-      isDefault: true
-    }
-  ],
-  defaultWalletMethodId: 'wallet-card-5496',
+  paymentMethod: 'CASH',
+  walletMethods: [],
+  defaultWalletMethodId: undefined,
   insuranceQuotes: [],
   insuranceLoading: false,
   estimateLoading: false,
@@ -211,16 +196,10 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
   },
   addWalletMethod(input) {
     set((state) => {
-      const isUpi = input.type === 'UPI_ID';
       const normalizedUpi = input.upiId?.trim().toLowerCase();
-      const normalizedLast4 = input.cardLast4?.trim();
       const normalizedLabel = input.label?.trim();
 
-      if (isUpi) {
-        if (!normalizedUpi || !UPI_PATTERN.test(normalizedUpi)) {
-          return state;
-        }
-      } else if (!normalizedLast4 || !/^\d{4}$/.test(normalizedLast4)) {
+      if (!normalizedUpi || !UPI_PATTERN.test(normalizedUpi)) {
         return state;
       }
 
@@ -230,13 +209,8 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
       const nextMethod: CustomerWalletMethod = {
         id: nextId,
         type: input.type,
-        label:
-          normalizedLabel ||
-          (isUpi
-            ? `UPI ${normalizedUpi}`
-            : `${input.type === 'DEBIT_CARD' ? 'Debit Card' : 'Credit Card'} •••• ${normalizedLast4}`),
-        cardLast4: isUpi ? undefined : normalizedLast4,
-        upiId: isUpi ? normalizedUpi : undefined,
+        label: normalizedLabel || `UPI ${normalizedUpi}`,
+        upiId: normalizedUpi,
         isDefault: shouldSetDefault
       };
 

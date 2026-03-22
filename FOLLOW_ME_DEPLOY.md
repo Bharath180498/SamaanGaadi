@@ -68,11 +68,24 @@ npm run dev:backend
 # admin local (point to Railway backend)
 NEXT_PUBLIC_API_URL=https://<backend-public-domain>/api npm run dev:admin
 
-# customer app
-npm run dev:mobile
+# clear cache
+pkill -f "expo start --lan --port 8081" || true
+pkill -f "start-expo-manual-tunnel.sh . 8081" || true
+pkill -f "ngrok.*8081" || true
+rm -f /tmp/ngrok-expo-8081.pid /tmp/ngrok-expo-8081.log
 
-# driver app
-npm run dev:driver
+# customer app + driver app on separate tunnels (recommended)
+# Terminal 1 (customer/mobile)
+NGROK_CONFIG="$HOME/.ngrok-mobile.yml" npm run dev:mobile:tunnel
+
+# Terminal 2 (driver)
+NGROK_CONFIG="$HOME/.ngrok-driver.yml" npm run dev:driver:tunnel
+
+# if you want cache clear
+# Terminal 1
+NGROK_CONFIG="$HOME/.ngrok-mobile.yml" npm run dev:mobile:clear
+# Terminal 2
+NGROK_CONFIG="$HOME/.ngrok-driver.yml" npm run dev:driver:clear
 ```
 
 ## 5. Quick checks

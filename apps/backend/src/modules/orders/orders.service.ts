@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import {
   AvailabilityStatus,
   InsurancePlan,
+  KycDocStatus,
+  KycDocType,
   OrderStatus,
   TripOfferStatus,
   TripStatus,
@@ -21,6 +23,12 @@ import { RedisService } from '../../common/redis/redis.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { buildS3DownloadUrl } from '../../common/utils/s3-upload.util';
+import {
+  buildTripStartOtpRedisKey,
+  generateTripStartOtpCode,
+  TRIP_START_OTP_TTL_SECONDS,
+  TRIP_START_OTP_VISIBLE_STATUSES
+} from '../../common/utils/trip-start-otp.util';
 
 const MAX_INTRA_CITY_DISTANCE_KM = 35;
 
@@ -78,6 +86,28 @@ export class OrdersService {
     if (!proof || typeof proof.photoFileKey !== 'string' || !proof.photoFileKey.trim()) {
       return order;
     }
+    const signedReadUrl = await this.resolveReadableMediaUrl({
+      fileKey: proof.photoFileKey,
+      fallbackUrl: proof.photoUrl
+    });
+
+    if (signedReadUrl) {
+      proof.photoUrl = signedReadUrl;
+    }
+
+    return order;
+  }
+
+  private async resolveReadableMediaUrl(input: {
+    fileKey?: string | null;
+    fallbackUrl?: string | null;
+  }): Promise<string | undefined> {
+    const normalizedFileKey = typeof input.fileKey === 'string' ? input.fileKey.trim() : '';
+    const normalizedFallbackUrl = typeof input.fallbackUrl === 'string' ? input.fallbackUrl.trim() : '';
+
+    if (!normalizedFileKey) {
+      return normalizedFallbackUrl || undefined;
+    }
 
     const endpoint = (this.configService.get<string>('s3.endpoint') ?? '').trim();
     const accessKeyId = (this.configService.get<string>('s3.accessKeyId') ?? '').trim();
@@ -94,15 +124,100 @@ export class OrdersService {
         secretAccessKey
       },
       {
-        fileKey: proof.photoFileKey,
+        fileKey: normalizedFileKey,
         expiresInSeconds: 3600
       }
     );
 
-    if (signedReadUrl) {
-      proof.photoUrl = signedReadUrl;
+    return (signedReadUrl ?? normalizedFallbackUrl) || undefined;
+  }
+
+  private async attachDriverPhotoUrl<
+    T extends {
+      trip?: {
+        driver?: {
+          user?: {
+            photoUrl?: string | null;
+            kycDocuments?: Array<{
+              fileKey?: string | null;
+              fileUrl?: string | null;
+            }>;
+          } | null;
+        } | null;
+      } | null;
+    }
+  >(order: T): Promise<T> {
+    const user = order.trip?.driver?.user as
+      | {
+          photoUrl?: string | null;
+          kycDocuments?: Array<{
+            fileKey?: string | null;
+            fileUrl?: string | null;
+          }>;
+        }
+      | undefined;
+
+    if (!user) {
+      return order;
     }
 
+    const selfie = Array.isArray(user.kycDocuments) ? user.kycDocuments[0] : undefined;
+    const signedReadUrl = await this.resolveReadableMediaUrl({
+      fileKey: selfie?.fileKey,
+      fallbackUrl: selfie?.fileUrl ?? user.photoUrl
+    });
+
+    if (signedReadUrl) {
+      user.photoUrl = signedReadUrl;
+    }
+
+    if ('kycDocuments' in user) {
+      delete user.kycDocuments;
+    }
+
+    return order;
+  }
+
+  private normalizeTripStartOtp(value: unknown) {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    const trimmed = value.trim();
+    return /^\d{6}$/.test(trimmed) ? trimmed : '';
+  }
+
+  private shouldExposeTripStartOtp(status: TripStatus | string | null | undefined) {
+    if (!status) {
+      return false;
+    }
+
+    return TRIP_START_OTP_VISIBLE_STATUSES.includes(status as TripStatus);
+  }
+
+  private async attachTripStartOtp<
+    T extends {
+      trip?: {
+        id?: string;
+        status?: TripStatus | string | null;
+        startOtpCode?: string | null;
+      } | null;
+    }
+  >(order: T): Promise<T> {
+    const trip = order.trip;
+    if (!trip?.id || !this.shouldExposeTripStartOtp(trip.status)) {
+      return order;
+    }
+
+    const key = buildTripStartOtpRedisKey(trip.id);
+    let otpCode = this.normalizeTripStartOtp(await this.redis.get(key));
+
+    if (!otpCode) {
+      otpCode = generateTripStartOtpCode();
+      await this.redis.set(key, otpCode, 'EX', TRIP_START_OTP_TTL_SECONDS);
+    }
+
+    trip.startOtpCode = otpCode;
     return order;
   }
 
@@ -301,7 +416,24 @@ export class OrdersService {
           include: {
             driver: {
               include: {
-                user: true,
+                user: {
+                  include: {
+                    kycDocuments: {
+                      where: {
+                        type: KycDocType.SELFIE,
+                        status: {
+                          not: KycDocStatus.REJECTED
+                        }
+                      },
+                      orderBy: [{ updatedAt: 'desc' }],
+                      take: 1,
+                      select: {
+                        fileKey: true,
+                        fileUrl: true
+                      }
+                    }
+                  }
+                },
                 vehicles: true,
                 payoutAccount: true,
                 paymentMethods: {
@@ -333,7 +465,9 @@ export class OrdersService {
       throw new NotFoundException('Order not found');
     }
 
-    return this.attachReadableDeliveryProofUrl(order);
+    const withProof = await this.attachReadableDeliveryProofUrl(order);
+    const withDriverPhoto = await this.attachDriverPhotoUrl(withProof);
+    return this.attachTripStartOtp(withDriverPhoto);
   }
 
   async timeline(orderId: string) {

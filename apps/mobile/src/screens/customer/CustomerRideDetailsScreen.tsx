@@ -122,6 +122,15 @@ function prettify(input?: string | null) {
   return input.replace(/_/g, ' ');
 }
 
+function renderStars(value?: number | null) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 'N/A';
+  }
+
+  const rounded = Math.min(5, Math.max(1, Math.round(value)));
+  return `${'★'.repeat(rounded)}${'☆'.repeat(5 - rounded)}`;
+}
+
 function normalizeImageUrl(value: unknown) {
   if (typeof value !== 'string') {
     return '';
@@ -228,6 +237,9 @@ export function CustomerRideDetailsScreen({ navigation, route }: Props) {
   });
   const paymentDirectToDriver = Boolean(ride?.payment?.directPayToDriver);
   const driverPreferredPayment = ride?.trip?.driverPreferredPaymentLabel ?? ride?.trip?.driverPreferredUpiId;
+  const submittedDriverRating = ride?.trip?.rating?.driverRating;
+  const submittedReview = typeof ride?.trip?.rating?.review === 'string' ? ride.trip.rating.review.trim() : '';
+  const hasSubmittedFeedback = typeof submittedDriverRating === 'number' || submittedReview.length > 0;
 
   const openTracking = () => {
     if (!ride) {
@@ -391,6 +403,14 @@ export function CustomerRideDetailsScreen({ navigation, route }: Props) {
               <Text style={styles.lineItem}>Invoice Value: {formatInr(ride.invoiceValue)}</Text>
               <Text style={styles.lineItem}>E-way Bill: {ride.ewayBillNumber ?? 'N/A'}</Text>
             </View>
+
+            {hasSubmittedFeedback ? (
+              <View style={styles.sectionCard}>
+                <Text style={styles.sectionTitle}>Your Feedback</Text>
+                <Text style={styles.lineItem}>Driver Rating: {renderStars(submittedDriverRating)}</Text>
+                {submittedReview ? <Text style={styles.lineItem}>Comment: {submittedReview}</Text> : null}
+              </View>
+            ) : null}
 
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>Trip Timeline</Text>

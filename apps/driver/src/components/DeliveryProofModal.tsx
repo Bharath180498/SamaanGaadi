@@ -22,13 +22,6 @@ interface SignaturePoint {
 
 type SignatureStroke = SignaturePoint[];
 
-interface SignatureCanvasBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export interface DeliveryProofSubmission {
   receiverName: string;
   receiverSignature: string;
@@ -93,63 +86,7 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
   const [canvasWidth, setCanvasWidth] = useState(1);
   const [strokes, setStrokes] = useState<SignatureStroke[]>([]);
   const [isDrawingSignature, setIsDrawingSignature] = useState(false);
-  const signatureCanvasRef = useRef<View | null>(null);
   const isDrawingRef = useRef(false);
-  const canvasBoundsRef = useRef<SignatureCanvasBounds>({
-    x: 0,
-    y: 0,
-    width: 1,
-    height: SIGNATURE_HEIGHT
-  });
-
-  const updateCanvasMetrics = () => {
-    const node = signatureCanvasRef.current;
-    if (!node) {
-      return;
-    }
-
-    node.measureInWindow((x, y, width, height) => {
-      if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
-        return;
-      }
-
-      canvasBoundsRef.current = { x, y, width, height };
-      setCanvasWidth(width);
-    });
-  };
-
-  const eventPointToCanvasPoint = (event: {
-    nativeEvent: {
-      pageX?: number;
-      pageY?: number;
-      locationX: number;
-      locationY: number;
-    };
-  }) => {
-    const bounds = canvasBoundsRef.current;
-    const pageX = event.nativeEvent.pageX;
-    const pageY = event.nativeEvent.pageY;
-
-    if (typeof pageX === 'number' && typeof pageY === 'number' && bounds.width > 1) {
-      return normalizePoint(
-        {
-          x: pageX - bounds.x,
-          y: pageY - bounds.y
-        },
-        bounds.width,
-        bounds.height
-      );
-    }
-
-    return normalizePoint(
-      {
-        x: event.nativeEvent.locationX,
-        y: event.nativeEvent.locationY
-      },
-      canvasWidth,
-      SIGNATURE_HEIGHT
-    );
-  };
 
   const totalSignaturePoints = useMemo(
     () => strokes.reduce((sum, stroke) => sum + stroke.length, 0),
@@ -208,17 +145,19 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => !submitting,
-        onStartShouldSetPanResponderCapture: () => !submitting,
-        onMoveShouldSetPanResponder: (_event, gestureState) =>
-          !submitting && (Math.abs(gestureState.dx) > 1 || Math.abs(gestureState.dy) > 1),
-        onMoveShouldSetPanResponderCapture: () => !submitting,
-        onPanResponderTerminationRequest: () => false,
-        onShouldBlockNativeResponder: () => true,
+        onMoveShouldSetPanResponder: () => !submitting,
         onPanResponderGrant: (event) => {
           isDrawingRef.current = true;
           setIsDrawingSignature(true);
 
-          const nextPoint = eventPointToCanvasPoint(event);
+          const nextPoint = normalizePoint(
+            {
+              x: event.nativeEvent.locationX,
+              y: event.nativeEvent.locationY
+            },
+            canvasWidth,
+            SIGNATURE_HEIGHT
+          );
 
           setStrokes((current) => [...current, [nextPoint]]);
         },
@@ -227,7 +166,14 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
             return;
           }
 
-          const nextPoint = eventPointToCanvasPoint(event);
+          const nextPoint = normalizePoint(
+            {
+              x: event.nativeEvent.locationX,
+              y: event.nativeEvent.locationY
+            },
+            canvasWidth,
+            SIGNATURE_HEIGHT
+          );
 
           setStrokes((current) => {
             if (current.length === 0) {
@@ -403,17 +349,12 @@ export function DeliveryProofModal({ visible, submitting, onClose, onSubmit }: D
               </View>
 
               <View
-                ref={(node) => {
-                  signatureCanvasRef.current = node;
-                }}
-                collapsable={false}
                 style={styles.signatureCanvas}
                 onLayout={(event) => {
                   const width = event.nativeEvent.layout.width;
                   if (width > 0 && Number.isFinite(width)) {
                     setCanvasWidth(width);
                   }
-                  updateCanvasMetrics();
                 }}
                 {...panResponder.panHandlers}
               >
